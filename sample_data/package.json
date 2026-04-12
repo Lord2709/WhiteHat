@@ -1,0 +1,31 @@
+{
+  "name": "enterprise-payment-gateway",
+  "version": "3.2.1",
+  "description": "Customer-facing payment processing service — PCI-DSS scoped",
+  "dependencies": {
+    "express": "4.18.2",
+    "axios": "1.7.1",
+    "lodash": "4.17.21",
+    "ws": "8.17.0",
+    "jsonwebtoken": "9.0.0",
+    "bcryptjs": "2.4.3",
+    "pg": "8.11.3",
+    "redis": "4.6.10",
+    "cors": "2.8.5",
+    "helmet": "7.1.0",
+    "dotenv": "16.3.1",
+    "uuid": "9.0.0",
+    "ip": "2.0.0",
+    "elliptic": "6.5.4",
+    "node-tar": "6.2.0"
+  },
+  "devDependencies": {
+    "cross-spawn": "7.0.3",
+    "path-to-regexp": "0.1.7",
+    "micromatch": "4.0.5",
+    "nanoid": "3.3.7",
+    "jest": "29.7.0",
+    "eslint": "8.55.0",
+    "nodemon": "3.0.2"
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "systems": [
+    {
+      "name": "payment-gateway",
+      "tier": "critical",
+      "regulatory": ["PCI"],
+      "owner": "payments-team",
+      "description": "Customer-facing payment processing — Stripe, bank card transactions",
+      "downstream_services": ["fraud-detection", "order-service", "notification-svc", "audit-log"],
+      "packages_file": "package.json"
+    },
+    {
+      "name": "auth-service",
+      "tier": "critical",
+      "regulatory": ["SOX", "HIPAA"],
+      "owner": "identity-team",
+      "description": "SSO, JWT issuance, RBAC enforcement across all internal services",
+      "downstream_services": ["api-gateway", "user-service", "admin-panel", "mobile-api", "reporting-svc"],
+      "packages_file": "auth_package.json"
+    },
+    {
+      "name": "reporting-service",
+      "tier": "important",
+      "regulatory": ["SOX"],
+      "owner": "data-team",
+      "description": "Financial and compliance reporting dashboards — SOX-scoped",
+      "downstream_services": ["analytics-svc", "export-svc"],
+      "packages_file": "reporting_package.json"
+    },
+    {
+      "name": "notification-service",
+      "tier": "standard",
+      "regulatory": [],
+      "owner": "platform-team",
+      "description": "Email/SMS/push notifications for customer and internal events",
+      "downstream_services": [],
+      "packages_file": "notification_package.json"
+    }
+  ],
+  "team": [
+    {
+      "name": "Alex Chen",
+      "email": "alex.chen@company.com",
+      "role": "Senior Backend Engineer",
+      "expertise": ["nodejs", "security", "express"],
+      "owns": ["payment-gateway"]
+    },
+    {
+      "name": "Priya Sharma",
+      "email": "priya.sharma@company.com",
+      "role": "DevSecOps Engineer",
+      "expertise": ["python", "devops", "security"],
+      "owns": ["auth-service"]
+    },
+    {
+      "name": "Marcus Webb",
+      "email": "marcus.webb@company.com",
+      "role": "Full-Stack Engineer",
+      "expertise": ["nodejs", "react", "typescript"],
+      "owns": ["notification-service", "reporting-service"]
+    },
+    {
+      "name": "Yuki Tanaka",
+      "email": "yuki.tanaka@company.com",
+      "role": "Security Engineer",
+      "expertise": ["security", "python", "nodejs"],
+      "owns": []
+    }
+  ],
+  "maintenance_windows": [
+    { "day": "Sunday",   "time": "02:00", "duration_hours": 6, "notes": "Full maintenance — all systems" },
+    { "day": "Saturday", "time": "23:00", "duration_hours": 4, "notes": "Non-critical patches only" }
+  ]
+}
