@@ -29,7 +29,7 @@ In Configure page, click **"API Keys"**:
 - **Anthropic key** (`sk-ant-...`) → Claude claude-opus-4-5 generates natural language rationale
 - **Gemini key** (`AIza...`) → POCme queries for real PoC exploit research
 
-Without keys, the built-in rule-based engine handles everything — fully functional.
+At least one Gemini or Anthropic key is required for the full AI-assisted pipeline.
 
 ## Architecture — 9-Step Agentic Pipeline
 
@@ -38,7 +38,7 @@ SBOM / package.json  +  VA Report (PDF/text)
              ↓
    [1] Input Parse   — Extract packages + CVE IDs from VA report
              ↓
-   [2] CVE Discovery — NVD CVE API 2.0 SCA scan + VA CVE merge
+  [2] CVE Discovery — OSV/NVD verification + bounded LLM fallback + VA CVE merge
              ↓
    [3] Deep Research — NVD history + Gemini "Deep Intelligence Gathering"
                        (exact POCme /api/research.js logic)
@@ -48,7 +48,7 @@ SBOM / package.json  +  VA Report (PDF/text)
              ↓
    [5] AI Evaluation — Claude agent: viability / risk / remediation / verification
              ↓
-   [6] Blast Radius  — Dependency graph traversal → affected services
+  [6] Blast Radius  — Known dependency context + bounded LLM impact analysis
              ↓
    [7] AI Scoring    — Priority = (CVSS × PoC × BlastRadius) ÷ Complexity × Tier × RegFlag
              ↓
@@ -63,7 +63,5 @@ SBOM / package.json  +  VA Report (PDF/text)
 
 | Key | Effect |
 |-----|--------|
-| Anthropic `sk-ant-...` | Claude claude-opus-4-5 rationale + exploit evaluation |
-| Gemini `AIza...` | Real-time CVE intelligence + PoC generation via POCme engine |
-
-Without keys: rule-based engine + code stubs — fully functional for demos.
+| Anthropic `sk-ant-...` | Claude claude-opus-4-5 rationale + bounded exploit evaluation |
+| Gemini `AIza...` | Verified CVE research support + PoC/verification utility generation |

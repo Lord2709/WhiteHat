@@ -175,6 +175,7 @@
   .cvss-high{background:rgba(245,158,11,.15);color:var(--warning);border:1px solid rgba(245,158,11,.25)}
   .cvss-medium{background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.2)}
   .cvss-low{background:var(--succ-dim);color:var(--success);border:1px solid rgba(16,185,129,.25)}
+  .cvss-pending{background:rgba(148,163,184,.1);color:#94a3b8;border:1px solid rgba(148,163,184,.25)}
   .poc-badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;font-family:var(--mono);white-space:nowrap}
   .poc-yes{background:rgba(236,72,153,.15);color:#f472b6;border:1px solid rgba(236,72,153,.25)}
   .poc-no{background:var(--bg4);color:var(--text3);border:1px solid var(--border2)}
@@ -197,6 +198,14 @@
   .exploit-code-wrap{position:relative}
   .exploit-code-wrap pre{margin:0!important;border-radius:0!important;max-height:400px;overflow-y:auto}
   .exploit-code-wrap code{font-family:var(--mono)!important;font-size:12px!important;line-height:1.6!important}
+  .poc-generate-zone{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;gap:16px;background:var(--bg1);border-bottom:1px solid var(--border2)}
+  .poc-generate-btn{display:flex;align-items:center;gap:10px;padding:12px 28px;border-radius:10px;border:1.5px solid var(--danger);background:rgba(255,71,87,.08);color:var(--danger);font-weight:700;font-size:14px;cursor:pointer;transition:all .2s;font-family:var(--sans)}
+  .poc-generate-btn:hover{background:rgba(255,71,87,.18);box-shadow:0 0 18px rgba(255,71,87,.25)}
+  .poc-generate-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+  .poc-lang-selector{display:flex;gap:8px}
+  .poc-lang-btn{padding:5px 14px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:12px;cursor:pointer;font-family:var(--mono);transition:all .15s}
+  .poc-lang-btn.active{border-color:var(--danger);color:var(--danger);background:rgba(255,71,87,.08)}
+  .poc-warning{font-size:11px;color:var(--text3);text-align:center;max-width:480px;line-height:1.5}
   .copy-btn{position:absolute;top:10px;right:10px;padding:4px 10px;font-size:10px;font-family:var(--mono);background:rgba(0,0,0,.5);color:var(--text2);border:1px solid var(--border2);border-radius:5px;cursor:pointer;transition:all .15s;z-index:10}
   .copy-btn:hover{color:var(--primary);border-color:var(--primary)}
   .exploit-eval{padding:16px 18px;border-top:1px solid var(--border2)}
@@ -283,6 +292,8 @@
   .source-badge{font-size:9px;padding:2px 6px;border-radius:4px;font-family:var(--mono)}
   .source-va{background:var(--sec-dim);color:#a78bfa;border:1px solid rgba(124,58,237,.25)}
   .source-nvd{background:var(--blue-dim);color:#60a5fa;border:1px solid rgba(59,130,246,.25)}
+  .source-osv{background:rgba(16,185,129,.12);color:#34d399;border:1px solid rgba(16,185,129,.3)}
+  .source-llm-fallback{background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.3)}
   .source-demo{background:var(--bg4);color:var(--text3);border:1px solid var(--border2)}
 </style>
 </head>
@@ -293,8 +304,16 @@ const { useState, useEffect, useRef, useCallback } = React;
 const API_URL = 'http://localhost:8000';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-const cvssClass  = s => s>=9?'cvss-critical':s>=7?'cvss-high':s>=4?'cvss-medium':'cvss-low';
-const cvssLabel  = s => s>=9?'CRITICAL':s>=7?'HIGH':s>=4?'MEDIUM':'LOW';
+const cvssClass  = (s,p) => p||s===0?'cvss-pending':s>=9?'cvss-critical':s>=7?'cvss-high':s>=4?'cvss-medium':'cvss-low';
+const cvssLabel  = (s,p,src) => {
+  if (p||s===0) return 'NVD PENDING';
+  const sev = s>=9?'CRITICAL':s>=7?'HIGH':s>=4?'MEDIUM':'LOW';
+  if (src==='nvd-primary') return sev;           // NVD assigned — no suffix
+  if (src==='nvd-cna')     return sev+' (CNA)';  // NVD has it but not yet scored by NIST
+  if (src==='osv-cna')     return sev+' (CNA)';  // OSV-only fallback
+  return sev;
+};
+const sourceDetailLabel = s => s==='nvd-primary'?'NVD/NIST':s==='osv-cna'?'CNA / OSV fallback':s==='nvd'?'NVD/NIST':s==='osv'?'OSV summary':'—';
 const scoreClass = s => s>80?'high':s>30?'med':'';
 const pClass     = p => `p-${(p||'medium').toLowerCase()}`;
 const vClass     = v => v==='High'?'v-high':v==='Low'?'v-low':'v-medium';
@@ -302,19 +321,19 @@ const langClass  = l => `lang-${(l||'python').toLowerCase()}`;
 const now        = () => new Date().toLocaleTimeString('en-US',{hour12:false});
 const initials   = n => (n||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
 const avatarClr  = n => {const h=[...n].reduce((a,c)=>a+c.charCodeAt(0),0);return ['#7c3aed','#3b82f6','#10b981','#f59e0b','#ef4444','#ec4899'][h%6];};
-const sourceBadge = s => s==='va-report'?'source-va':s==='nvd-sca'?'source-nvd':'source-demo';
-const sourceLabel = s => s==='va-report'?'VA REPORT':s==='nvd-sca'?'NVD LIVE':'DEMO';
+const sourceBadge = s => s==='va-report'?'source-va':s==='nvd-sca'||s==='nvd'||s==='nvd-verified'?'source-nvd':s==='osv'?'source-osv':s==='llm-fallback'?'source-llm-fallback':'source-demo';
+const sourceLabel = s => s==='va-report'?'VA':s==='nvd-sca'||s==='nvd'?'NVD':s==='nvd-verified'?'NVD ✓':s==='osv'?'OSV ✓':s==='llm-fallback'?'LLM?':'DEMO';
 
 // ─── Pipeline Steps (9) ─────────────────────────────────────────────────────
 const STEPS = [
   {key:'input_parse',    label:'Input Parsing',         icon:'📄',desc:'SBOM + VA report parsing'},
-  {key:'cve_discovery',  label:'CVE Discovery',         icon:'🔍',desc:'SCA scan via NVD CVE API'},
-  {key:'deep_research',  label:'Deep CVE Research',     icon:'🧬',desc:'NVD history + Gemini intelligence (POCme)'},
-  {key:'exploit_gen',    label:'Exploit Generation',    icon:'💣',desc:'Gemini PoC synthesis (POCme engine)'},
-  {key:'evaluation',     label:'Exploit Evaluation',    icon:'⚖️',desc:'AI agent viability & risk assessment'},
-  {key:'blast_radius',   label:'Blast Radius Mapping',  icon:'🌐',desc:'Downstream dependency impact'},
+  {key:'cve_discovery',  label:'CVE Discovery',         icon:'🔍',desc:'OSV/NVD verification → bounded LLM fallback'},
+  {key:'deep_research',  label:'Deep CVE Research',     icon:'🧬',desc:'NVD history + LLM Deep Intelligence Gathering (POCme)'},
+  {key:'exploit_gen',    label:'Exploit Generation',    icon:'💣',desc:'LLM PoC synthesis — Senior Vulnerability Researcher (POCme)'},
+  {key:'evaluation',     label:'Exploit Evaluation',    icon:'⚖️',desc:'Claude/Gemini viability, risk & remediation analysis'},
+  {key:'blast_radius',   label:'Blast Radius Mapping',  icon:'🌐',desc:'LLM enterprise impact & PoC status analysis'},
   {key:'ai_scoring',     label:'Priority Scoring',      icon:'⚡',desc:'CVSS × PoC × Blast ÷ Complexity'},
-  {key:'rationale',      label:'Rationale Generation',  icon:'🧠',desc:'Claude explains every decision'},
+  {key:'rationale',      label:'Rationale Generation',  icon:'🧠',desc:'LLM auditable natural-language rationale per CVE'},
   {key:'schedule_assign',label:'Schedule Assignment',   icon:'📅',desc:'Sprint capacity + completion date'},
 ];
 
@@ -359,6 +378,7 @@ function ConfigurePage({onRun}) {
   const [packages,   setPackages]   = useState({});
   const [fileName,   setFileName]   = useState('');
   const [vaCves,     setVaCves]     = useState([]);
+  const [vaLlmNote,  setVaLlmNote]  = useState('');
   const [vaFile,     setVaFile]     = useState('');
   const [vaUploading,setVaUploading]= useState(false);
   const [vaDragging, setVaDragging] = useState(false);
@@ -372,10 +392,18 @@ function ConfigurePage({onRun}) {
   ]);
   const [newMember, setNewMember] = useState({name:'',email:'',expertiseStr:'',sprintHours:20});
   const [apiKeys,  setApiKeys]   = useState({anthropic:'',gemini:''});
+  const [envKeys,  setEnvKeys]   = useState({gemini:false,anthropic:false,nvd:false});
   const [showApiModal, setShowApiModal] = useState(false);
+  useEffect(()=>{
+    fetch(`${API_URL}/api/env-status`).then(r=>r.json()).then(d=>{
+      setEnvKeys({gemini:!!d.gemini_key_loaded, anthropic:!!d.anthropic_key_loaded, nvd:!!d.nvd_key_loaded});
+    }).catch(()=>{});
+  },[]);
   const [exploitLang, setExploitLang]  = useState('python');
+  const [pocState, setPocState]        = useState({});   // { [cve_id]: {loading, code, language, error, model} }
   const fileRef = useRef(null);
   const vaRef   = useRef(null);
+  const sampleRef = useRef(null);
 
   const parsePackageJson = txt => {
     try {
@@ -406,26 +434,61 @@ function ConfigurePage({onRun}) {
       const resp = await fetch(`${API_URL}/api/upload-report`, {method:'POST', body:fd});
       const data = await resp.json();
       setVaCves(data.cve_ids || []);
+      if (data.llm_mapped) setVaLlmNote(`🤖 LLM mapped ${data.count} CVEs from report findings (no standard CVE IDs found)`);
+      else if (data.count > 0) setVaLlmNote(`✓ ${data.count} CVE IDs extracted directly from document`);
+      else setVaLlmNote('⚠ No CVEs found — add packages in SBOM or use LLM discovery');
     } catch {
       // Fallback: parse as text client-side
       const r = new FileReader();
       r.onload = e => {
         const found = (e.target.result.match(/CVE-\d{4}-\d{4,7}/gi)||[]).filter((v,i,a)=>a.indexOf(v)===i);
         setVaCves(found.map(c=>c.toUpperCase()));
+        setVaLlmNote(found.length > 0 ? `✓ ${found.length} CVEs found (client-side parse)` : '⚠ No CVEs found in text');
       };
       r.readAsText(f);
     }
     setVaUploading(false);
   };
 
-  const loadSample = () => {
-    setPackages({'express':'4.18.2','lodash':'4.17.21','axios':'1.7.1','ws':'8.17.0','jsonwebtoken':'9.0.0','cross-spawn':'7.0.3','path-to-regexp':'0.1.7','ip':'2.0.0','elliptic':'6.5.4','nanoid':'3.3.7','micromatch':'4.0.5','node-tar':'6.2.0'});
-    setFileName('sample_package.json (12 packages)');
+  const fetchSampleBundle = async () => {
+    if (sampleRef.current) return sampleRef.current;
+    const resp = await fetch(`${API_URL}/api/sample-input`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    const data = await resp.json();
+    sampleRef.current = data;
+    return data;
   };
 
-  const loadSampleVa = () => {
-    setVaCves(['CVE-2024-29415','CVE-2024-21490','CVE-2021-44228','CVE-2022-22965','CVE-2024-37890']);
-    setVaFile('sample_va_report.pdf (5 CVEs)');
+  const applySampleSystem = data => {
+    if (data.system_info) setSysInfo(data.system_info);
+    if (Array.isArray(data.team_members) && data.team_members.length) setTeam(data.team_members);
+    if (Array.isArray(data.maintenance_windows) && data.maintenance_windows.length) setWindows(data.maintenance_windows);
+  };
+
+  const loadSample = async () => {
+    try {
+      const data = await fetchSampleBundle();
+      setPackages(data.packages || {});
+      setFileName(`${data.package_filename || 'sample_package.json'} (${data.package_count || Object.keys(data.packages||{}).length} packages)`);
+      applySampleSystem(data);
+    } catch (e) {
+      setVaLlmNote(`⚠ Unable to load demo sample data: ${e.message}`);
+    }
+  };
+
+  const loadSampleVa = async () => {
+    try {
+      const data = await fetchSampleBundle();
+      setVaCves(data.va_cve_ids || []);
+      setVaFile(`${data.va_filename || 'va_report_sample.txt'} (${data.va_count || (data.va_cve_ids||[]).length} matched CVEs)`);
+      if ((data.unmatched_va_count||0) > 0) {
+        setVaLlmNote(`✓ Loaded ${data.va_count} SBOM-matched CVEs from sample VA report; omitted ${data.unmatched_va_count} unrelated findings`);
+      } else {
+        setVaLlmNote(`✓ Loaded ${data.va_count || (data.va_cve_ids||[]).length} SBOM-matched CVEs from sample VA report`);
+      }
+    } catch (e) {
+      setVaLlmNote(`⚠ Unable to load demo VA report: ${e.message}`);
+    }
   };
 
   const toggleReg = r => setSysInfo(s=>({...s,regulatory:s.regulatory.includes(r)?s.regulatory.filter(x=>x!==r):[...s.regulatory,r]}));
@@ -439,7 +502,45 @@ function ConfigurePage({onRun}) {
   const removeMember = i => setTeam(t=>t.filter((_,j)=>j!==i));
   const updateSprintHours = (i,h) => setTeam(t=>t.map((m,j)=>j===i?{...m,schedule:{...m.schedule,sprint_hours_remaining:parseInt(h)||0}}:m));
 
-  const canRun = Object.keys(packages).length > 0 || vaCves.length > 0;
+  const hasApiKey = !!(apiKeys.anthropic || apiKeys.gemini || envKeys.gemini || envKeys.anthropic);
+  const canRun = (Object.keys(packages).length > 0 || vaCves.length > 0) && hasApiKey;
+
+  const handleGeneratePoC = async (vuln, lang) => {
+    const cveId = vuln.cve_id;
+    setPocState(prev => ({...prev, [cveId]: {loading: true, code: '', error: null}}));
+    try {
+      const body = {
+        cve_id:           cveId,
+        description:      vuln.description || '',
+        full_research:    vuln.full_research || vuln.description || '',
+        package:          vuln.package || '',
+        version:          vuln.version || '',
+        language:         lang || exploitLang,
+        cvss:             vuln.cvss || 5.0,
+        references:       vuln.references || [],
+        research_grounded: !!vuln.research_grounded,
+        gemini_api_key:   apiKeys.gemini || null,
+        anthropic_api_key: apiKeys.anthropic || null,
+      };
+      const res = await fetch(`${API_URL}/api/generate-exploit`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Generation failed');
+      setPocState(prev => ({...prev, [cveId]: {
+        loading: false,
+        code:     data.code || '',
+        language: data.language || lang,
+        model:    data.model || 'unknown',
+        generated: data.generated,
+        error:    null,
+      }}));
+    } catch (err) {
+      setPocState(prev => ({...prev, [cveId]: {loading: false, code: '', error: err.message}}));
+    }
+  };
 
   const handleRun = () => {
     onRun({packages, va_cve_ids:vaCves, system_info:sysInfo, maintenance_windows:windows,
@@ -454,9 +555,20 @@ function ConfigurePage({onRun}) {
           <div className="page-title">Configure Analysis</div>
           <div className="page-sub">Upload SBOM + VA report, define your system, set team schedule</div>
         </div>
-        <div style={{display:'flex',gap:10}}>
-          <button className="btn btn-outline btn-sm" onClick={()=>setShowApiModal(true)}><Key/> API Keys</button>
-          <button className="btn btn-primary" disabled={!canRun} onClick={handleRun}><Play/> Run Agentic Analysis</button>
+        <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8}}>
+          {!hasApiKey&&<div style={{background:'rgba(239,68,68,.12)',border:'1px solid rgba(239,68,68,.35)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#fca5a5',display:'flex',alignItems:'center',gap:6}}>
+            ⚠ Add a Gemini or Anthropic API key to enable the LLM pipeline
+          </div>}
+          {(envKeys.gemini||envKeys.anthropic)&&<div style={{background:'rgba(16,185,129,.1)',border:'1px solid rgba(16,185,129,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#6ee7b7',display:'flex',alignItems:'center',gap:6}}>
+            ✓ Server .env: {envKeys.gemini&&'Gemini'}{envKeys.gemini&&envKeys.anthropic&&' + '}{envKeys.anthropic&&'Anthropic'} key loaded{envKeys.nvd&&' + NVD'}
+          </div>}
+          {!envKeys.nvd&&(envKeys.gemini||envKeys.anthropic)&&<div style={{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#fcd34d',display:'flex',alignItems:'center',gap:6}}>
+            ⚠ No NVD_API_KEY — CVSS fetch limited to 5 req/30s. Add key to .env to prevent NVD PENDING on multi-CVE scans.
+          </div>}
+          <div style={{display:'flex',gap:10}}>
+            <button className="btn btn-outline btn-sm" onClick={()=>setShowApiModal(true)}><Key/> {(envKeys.gemini||envKeys.anthropic)?'✓ .env Keys Active':'Add API Keys'}</button>
+            <button className="btn btn-primary" disabled={!canRun} onClick={handleRun} title={!hasApiKey?'Add a Gemini or Anthropic key first':undefined}><Play/> Run Agentic Analysis</button>
+          </div>
         </div>
       </div>
 
@@ -480,7 +592,7 @@ function ConfigurePage({onRun}) {
                 <input ref={fileRef} type="file" accept=".json" style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
               </div>
               <div style={{textAlign:'center',margin:'10px 0',color:'var(--text3)',fontSize:11}}>— or —</div>
-              <button className="btn btn-outline" style={{width:'100%'}} onClick={loadSample}>⚡ Load Demo SBOM (12 packages)</button>
+              <button className="btn btn-outline" style={{width:'100%'}} onClick={loadSample}>⚡ Load Demo SBOM</button>
               {Object.keys(packages).length>0 && (
                 <div style={{marginTop:12}}>
                   <div className="section-label">Packages ({Object.keys(packages).length})</div>
@@ -509,13 +621,14 @@ function ConfigurePage({onRun}) {
                   <>
                     <div style={{fontSize:28,marginBottom:8}}>📄</div>
                     <div style={{fontSize:13,fontWeight:600,color:'var(--text0)',marginBottom:3}}>{vaFile||'Drop VA Report here (PDF or .txt)'}</div>
-                    <div style={{fontSize:11,color:'var(--text2)'}}>{vaFile?`${vaCves.length} CVE IDs extracted`:'CVE IDs parsed automatically'}</div>
+                    <div style={{fontSize:11,color:'var(--text2)'}}>{vaFile?`${vaCves.length} CVE IDs extracted`:'CVE IDs parsed automatically — supports VA-01/VULN-1 style via LLM'}</div>
                   </>
                 )}
                 <input ref={vaRef} type="file" accept=".pdf,.txt,.csv,.html,.xml" style={{display:'none'}} onChange={e=>handleVaFile(e.target.files[0])}/>
               </div>
+              {vaLlmNote&&<div style={{marginTop:8,padding:'6px 10px',borderRadius:6,fontSize:11,background:vaLlmNote.startsWith('🤖')?'rgba(124,58,237,.12)':vaLlmNote.startsWith('⚠')?'rgba(245,158,11,.1)':'rgba(16,185,129,.1)',color:vaLlmNote.startsWith('🤖')?'#a78bfa':vaLlmNote.startsWith('⚠')?'#fbbf24':'#6ee7b7',border:`1px solid ${vaLlmNote.startsWith('🤖')?'rgba(124,58,237,.3)':vaLlmNote.startsWith('⚠')?'rgba(245,158,11,.25)':'rgba(16,185,129,.25)'}`}}>{vaLlmNote}</div>}
               <div style={{textAlign:'center',margin:'10px 0',color:'var(--text3)',fontSize:11}}>— or —</div>
-              <button className="btn btn-purple btn-sm" style={{width:'100%'}} onClick={loadSampleVa}>📋 Load Demo VA Report (5 CVEs)</button>
+              <button className="btn btn-purple btn-sm" style={{width:'100%'}} onClick={loadSampleVa}>📋 Load Demo VA Report</button>
               {vaCves.length>0 && (
                 <div style={{marginTop:12}}>
                   <div className="section-label">Extracted CVE IDs ({vaCves.length})</div>
@@ -648,7 +761,7 @@ function ConfigurePage({onRun}) {
             </div>
             <div style={{fontSize:11,color:'var(--text2)',marginTop:10,lineHeight:1.7}}>
               PoC: ×3.0 active | ×1.0 none &nbsp;·&nbsp; Tier: Critical ×3, Important ×2<br/>
-              Regulatory: ×2.0 &nbsp;·&nbsp; Exploit: Gemini (POCme engine)
+              Regulatory: ×2.0 &nbsp;·&nbsp; Exploit: LLM (POCme engine) &nbsp;·&nbsp; Blast Radius: LLM
             </div>
           </div>
         </div>
@@ -657,11 +770,12 @@ function ConfigurePage({onRun}) {
       {showApiModal && (
         <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setShowApiModal(false)}}>
           <div className="modal-box">
-            <div className="modal-title">🔑 API Keys (Optional)</div>
+            <div className="modal-title">🔑 API Keys</div>
             <div className="modal-sub">
-              <strong style={{color:'var(--primary)'}}>Gemini</strong> key enables real POCme-style CVE research + PoC generation.<br/>
-              <strong style={{color:'var(--primary)'}}>Anthropic</strong> key enables Claude claude-opus-4-5 for rationale & exploit evaluation.<br/>
-              Without keys, the built-in rule-based engine handles everything.
+              <strong style={{color:'var(--danger)'}}>⚠ At least one key is required</strong> — the pipeline uses verified data sources plus bounded LLM analysis steps.<br/><br/>
+              <strong style={{color:'var(--success)'}}>Gemini</strong> → POCme CVE research, exploit generation, blast radius analysis, rationale.<br/>
+              <strong style={{color:'var(--primary)'}}>Anthropic</strong> → Claude claude-opus-4-5 for evaluation &amp; rationale (preferred for structured output).<br/>
+              Both keys = full dual-model pipeline with best-of-breed results.
             </div>
             <div className="field" style={{marginBottom:12}}>
               <label>Anthropic API Key (Claude claude-opus-4-5 — rationale + evaluation)</label>
@@ -691,7 +805,7 @@ function PipelinePage({stepStates, logs, progress}) {
     <div className="page">
       <div style={{marginBottom:20}}>
         <div className="page-title">🤖 Agentic Pipeline Running</div>
-        <div className="page-sub">9-step autonomous analysis — POCme research + Gemini exploits + Claude evaluation</div>
+        <div className="page-sub">9-step verified + AI-assisted pipeline — grounded CVE discovery · bounded research · LLM evaluation</div>
       </div>
       <div className="progress-bar-wrap"><div className="progress-bar-fill" style={{width:`${progress}%`}}/></div>
       <div className="pipeline-container">
@@ -773,7 +887,7 @@ function VulnerabilitiesTab({vulns, execSummary, riskReduction}) {
                   <td><div className={`rank-badge${v.rank===1?' rank1':v.rank<=3?' top3':''}`}>#{v.rank}</div></td>
                   <td><span className="cve-id">{v.cve_id}</span></td>
                   <td><span className="pkg-chip">{v.package}@{v.version||'?'}</span></td>
-                  <td><span className={`cvss-badge ${cvssClass(v.cvss)}`}>{v.cvss} {cvssLabel(v.cvss)}</span></td>
+                  <td><span className={`cvss-badge ${cvssClass(v.cvss,v.nvd_score_pending)}`}>{v.nvd_score_pending?'—':v.cvss} {cvssLabel(v.cvss,v.nvd_score_pending,v.cvss_source)}</span></td>
                   <td><span className={`poc-badge ${v.has_poc?'poc-yes':'poc-no'}`}>{v.has_poc?'⚡ ACTIVE':'None'}</span></td>
                   <td><span className={`viability-badge ${vClass(v.evaluation?.viability||'Medium')}`}>{v.evaluation?.viability||'—'}</span></td>
                   <td><span className="blast-num">×{v.blast_radius}</span></td>
@@ -800,7 +914,7 @@ function VulnerabilitiesTab({vulns, execSummary, riskReduction}) {
                         <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'#a78bfa',marginBottom:8}}>Blast Radius ({v.blast_radius})</div>
                         <div className="systems-list">{(v.affected_systems||[]).map(s=><span key={s} className="system-chip">{s}</span>)}</div>
                         <div style={{marginTop:14,display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                          {[['Complexity',`${v.complexity}/5`],['Est. Effort',`${v.estimated_hours}h`],['Tier',v.system_tier],['Regulatory',(v.regulatory||[]).join(',')||'None'],['Published',v.published||'—'],['Viability',v.evaluation?.viability||'—'],['Confidence',v.evaluation?.confidence||'—'],['PoC Source',v.poc_source||'N/A']].map(([l,val])=>(
+                          {[['Complexity',`${v.complexity}/5`],['Est. Effort',`${v.estimated_hours}h`],['Tier',v.system_tier],['Regulatory',(v.regulatory||[]).join(',')||'None'],['Published',v.published||'—'],['CVSS Source',sourceDetailLabel(v.cvss_source)],['Description Source',sourceDetailLabel(v.description_source||v.provenance?.description_source)],['Viability',v.evaluation?.viability||'—'],['Confidence',v.evaluation?.confidence||'—'],['PoC Source',v.poc_source||'N/A']].map(([l,val])=>(
                             <div key={l} style={{background:'var(--bg2)',borderRadius:6,padding:'7px 10px',border:'1px solid var(--border2)'}}>
                               <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'var(--text3)',marginBottom:2}}>{l}</div>
                               <div style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:600,color:'var(--text0)'}}>{val}</div>
@@ -821,11 +935,11 @@ function VulnerabilitiesTab({vulns, execSummary, riskReduction}) {
 }
 
 // ─── Exploits Tab (NEW) ──────────────────────────────────────────────────────
-function ExploitsTab({vulns}) {
+function ExploitsTab({vulns, pocState, setPocState, handleGeneratePoC, exploitLang}) {
   const [filter, setFilter] = useState('all');
 
   const filtered = (vulns||[]).filter(v=>{
-    if (filter==='generated') return v.exploit?.generated;
+    if (filter==='generated') return !!pocState?.[v.cve_id]?.code;
     if (filter==='high')      return v.evaluation?.viability==='High';
     if (filter==='poc')       return v.has_poc;
     return true;
@@ -835,13 +949,13 @@ function ExploitsTab({vulns}) {
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:18,flexWrap:'wrap',gap:10}}>
         <div>
-          <div style={{fontSize:16,fontWeight:700,color:'var(--text0)'}}>Generated PoC Exploits</div>
+          <div style={{fontSize:16,fontWeight:700,color:'var(--text0)'}}>On-Demand PoC Exploits</div>
           <div style={{fontSize:12,color:'var(--text2)',marginTop:3}}>
-            POCme engine: Gemini "Senior Vulnerability Researcher" prompt — for <strong style={{color:'var(--warning)'}}>authorized testing only</strong>
+            Click <strong style={{color:'var(--danger)'}}>💣 Generate PoC</strong> per CVE — Gemini "Senior Vulnerability Researcher" prompt — for <strong style={{color:'var(--warning)'}}>authorized testing only</strong>
           </div>
         </div>
         <div style={{display:'flex',gap:6}}>
-          {[['all','All'],['generated','Gemini-Gen'],['high','High Viability'],['poc','Active PoC']].map(([v,l])=>(
+          {[['all','All'],['generated','Generated'],['high','High Viability'],['poc','Active PoC']].map(([v,l])=>(
             <button key={v} className={`btn btn-sm ${filter===v?'btn-primary':'btn-outline'}`} onClick={()=>setFilter(v)}>{l}</button>
           ))}
         </div>
@@ -853,17 +967,55 @@ function ExploitsTab({vulns}) {
             <div className="exploit-meta">
               <span className="cve-id" style={{fontSize:14,fontWeight:700}}>{v.cve_id}</span>
               <span className="pkg-chip">{v.package}@{v.version||'?'}</span>
-              <span className={`cvss-badge ${cvssClass(v.cvss)}`}>{v.cvss} {cvssLabel(v.cvss)}</span>
+              <span className={`cvss-badge ${cvssClass(v.cvss,v.nvd_score_pending)}`}>{v.nvd_score_pending?'—':v.cvss} {cvssLabel(v.cvss,v.nvd_score_pending,v.cvss_source)}</span>
               {v.has_poc && <span className="poc-badge poc-yes">⚡ ACTIVE PoC</span>}
               <span className={`viability-badge ${vClass(v.evaluation?.viability||'Medium')}`}>Viability: {v.evaluation?.viability||'?'}</span>
             </div>
             <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              <span className={`lang-badge ${langClass(v.exploit?.language||'python')}`}>{v.exploit?.language||'python'}</span>
-              <span className={`gen-badge ${v.exploit?.generated?'gen-yes':'gen-no'}`}>{v.exploit?.generated?'✦ Gemini-Gen':'Structured Stub'}</span>
+              <span className={`lang-badge ${langClass(pocState?.[v.cve_id]?.language||exploitLang)}`}>
+                {pocState?.[v.cve_id]?.language||exploitLang}
+              </span>
+              <span className={`gen-badge ${pocState?.[v.cve_id]?.code?'gen-yes':'gen-no'}`}>
+                {pocState?.[v.cve_id]?.code ? `✦ ${pocState[v.cve_id].model||'Gemini-Gen'}` : '⏳ On-Demand'}
+              </span>
             </div>
           </div>
 
-          <CodeBlock code={v.exploit?.code||''} language={v.exploit?.language||'python'}/>
+          {!pocState?.[v.cve_id]?.code ? (
+            <div className="poc-generate-zone">
+              <div className="poc-lang-selector">
+                {['python','javascript','bash'].map(l => (
+                  <button key={l}
+                    className={`poc-lang-btn${(pocState?.[v.cve_id]?.language||exploitLang)===l?' active':''}`}
+                    onClick={()=>setPocState(p=>({...p,[v.cve_id]:{...p[v.cve_id],language:l}}))}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+              <button className="poc-generate-btn"
+                disabled={pocState?.[v.cve_id]?.loading}
+                onClick={()=>handleGeneratePoC(v, pocState?.[v.cve_id]?.language||exploitLang)}>
+                {pocState?.[v.cve_id]?.loading ? '⟳ Generating...' : '💣 Generate PoC'}
+              </button>
+              {pocState?.[v.cve_id]?.error && (
+                <div style={{color:'var(--danger)',fontSize:12,marginTop:8}}>{pocState[v.cve_id].error}</div>
+              )}
+              <div className="poc-warning">⚠ For authorized patch verification only. Use in isolated environment.</div>
+            </div>
+          ) : (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                <span style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)'}}>
+                  {pocState[v.cve_id]?.model ? `✦ ${pocState[v.cve_id].model}` : '✦ Generated'}
+                </span>
+                <button className="btn btn-sm btn-outline" style={{fontSize:10,padding:'2px 8px'}}
+                  onClick={()=>setPocState(p=>({...p,[v.cve_id]:{...p[v.cve_id],code:''}}))}>
+                  ↺ Regenerate
+                </button>
+              </div>
+              <CodeBlock code={pocState[v.cve_id].code} language={pocState[v.cve_id].language||'python'}/>
+            </div>
+          )}
 
           <div className="exploit-eval">
             <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
@@ -1145,7 +1297,7 @@ function ResultsPage({results}) {
         ))}
       </div>
       {tab==='vulns'    &&<VulnerabilitiesTab vulns={vulnerabilities} execSummary={exec_summary} riskReduction={risk_reduction}/>}
-      {tab==='exploits' &&<ExploitsTab vulns={vulnerabilities}/>}
+      {tab==='exploits' &&<ExploitsTab vulns={vulnerabilities} pocState={pocState} setPocState={setPocState} handleGeneratePoC={handleGeneratePoC} exploitLang={exploitLang}/>}
       {tab==='tickets'  &&<TicketsTab tickets={tickets}/>}
       {tab==='calendar' &&<CalendarTab calendar={calendar}/>}
       {tab==='dashboard'&&<DashboardTab stats={stats} vulns={vulnerabilities} execSummary={exec_summary} riskReduction={risk_reduction}/>}
@@ -1177,12 +1329,11 @@ function App() {
     setLogs([]);
     setProgress(0);
     setError('');
-    addLog('VulnPriority AI v2 — 9-step agentic pipeline initializing…','success');
+    addLog('VulnPriority AI v3 — verified + AI-assisted pipeline initializing…','success');
     addLog(`System: ${request.system_info.name} [${request.system_info.tier}] | ${Object.keys(request.packages).length} SBOM pkgs | ${request.va_cve_ids.length} VA CVEs | exploit lang: ${request.exploit_language}`,'info');
-    if (request.gemini_api_key) addLog('✓ Gemini key detected — real POCme deep research + exploit generation enabled','success');
-    if (request.anthropic_api_key) addLog('✓ Anthropic key detected — Claude claude-opus-4-5 rationale + evaluation enabled','success');
-    if (!request.gemini_api_key) addLog('ℹ No Gemini key — using structured exploit stubs + NVD data','');
-    if (!request.anthropic_api_key) addLog('ℹ No Anthropic key — using rule-based evaluation engine','');
+    if (request.gemini_api_key && request.anthropic_api_key) addLog('✓ Dual-model: Gemini (POCme research + exploits) + Claude (evaluation + rationale)','success');
+    else if (request.gemini_api_key) addLog('✓ Gemini key — CVE discovery, research, exploits, blast radius, evaluation, rationale all via Gemini','success');
+    else if (request.anthropic_api_key) addLog('✓ Anthropic key — all LLM pipeline steps via Claude claude-opus-4-5','success');
 
     try {
       const resp = await fetch(`${API_URL}/api/analyze`,{
@@ -1230,6 +1381,7 @@ function App() {
             addLog(`${pref} [${data.step.toUpperCase()}] ${data.message}`, type);
 
             if (data.count!=null)       addLog(`  └─ CVEs: ${data.count}`,'');
+            if (data.unmatched_va_count!=null) addLog(`  └─ Omitted VA CVEs not found in current SBOM: ${data.unmatched_va_count}`,'warn');
             if (data.poc_count!=null)   addLog(`  └─ Active PoC exploits: ${data.poc_count}`,data.poc_count>0?'warn':'');
             if (data.max_blast!=null)   addLog(`  └─ Max blast radius: ${data.max_blast} services`,'');
             if (data.generated!=null)   addLog(`  └─ Exploits generated: ${data.generated}`,'');
@@ -1297,7 +1449,7 @@ function App() {
         )}
 
         <div style={{borderTop:'1px solid var(--border2)',padding:'10px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:10,color:'var(--text3)',flexWrap:'wrap',gap:8}}>
-          <span>VulnPriority AI v2 — POCme CVE research + Gemini exploit gen + Claude evaluation + schedule-based assignment</span>
+          <span>VulnPriority AI v3 — verified discovery · bounded research · LLM exploit gen · LLM evaluation · LLM blast radius · schedule-based assignment</span>
           <span style={{fontFamily:'var(--mono)'}}>Priority = (CVSS × PoC × Blast) ÷ Complexity × Tier × RegFlag</span>
         </div>
       </div>

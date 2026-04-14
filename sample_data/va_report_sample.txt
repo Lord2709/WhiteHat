@@ -1,0 +1,131 @@
+================================================================================
+VULNERABILITY ASSESSMENT REPORT
+Organization: Acme Corp | Scope: Production Infrastructure | Date: 2025-01-15
+Conducted by: Internal Security Team | Classification: CONFIDENTIAL
+================================================================================
+
+EXECUTIVE SUMMARY
+─────────────────
+This report documents findings from a vulnerability assessment performed against
+Acme Corp's production environment. A total of 11 critical and high-severity
+vulnerabilities were identified across the application stack and infrastructure.
+Immediate remediation is recommended for all Critical findings.
+
+Critical: 4 | High: 5 | Medium: 2
+
+================================================================================
+SECTION 1 — CRITICAL FINDINGS
+================================================================================
+
+FINDING-001 [CRITICAL]
+CVE: CVE-2021-44228
+CVSS Score: 10.0 (Critical)
+Affected Component: Apache Log4j2 2.14.1 (log4j-core)
+Description: Remote Code Execution via JNDI injection in Log4j log messages.
+Commonly known as "Log4Shell". Exploitation observed in the wild since Dec 2021.
+Status: UNPATCHED
+Reference: https://nvd.nist.gov/vuln/detail/CVE-2021-44228
+
+FINDING-002 [CRITICAL]
+CVE: CVE-2022-22965
+CVSS Score: 9.8 (Critical)
+Affected Component: Spring Framework 5.3.17
+Description: Remote Code Execution via data binding on JDK 9+. "Spring4Shell"
+allows unauthenticated attackers to achieve full server compromise.
+Status: UNPATCHED
+Reference: https://nvd.nist.gov/vuln/detail/CVE-2022-22965
+
+FINDING-003 [CRITICAL]
+CVE: CVE-2024-29415
+CVSS Score: 9.8 (Critical)
+Affected Component: npm package `ip` v2.0.0
+Description: Server-Side Request Forgery (SSRF) — crafted IP strings bypass
+validation and allow reaching internal network services.
+Status: UNPATCHED
+Reference: https://nvd.nist.gov/vuln/detail/CVE-2024-29415
+
+FINDING-004 [CRITICAL]
+CVE: CVE-2024-48949
+CVSS Score: 9.1 (Critical)
+Affected Component: npm package `elliptic` v6.5.4
+Description: Incorrect ECDH parameter validation — crafted public keys bypass
+cryptographic operations, breaking authentication token integrity.
+Status: UNPATCHED
+Reference: https://nvd.nist.gov/vuln/detail/CVE-2024-48949
+
+================================================================================
+SECTION 2 — HIGH FINDINGS
+================================================================================
+
+FINDING-005 [HIGH]
+CVE: CVE-2024-21490
+CVSS Score: 8.8 (High)
+Affected Component: @angular/core v16.2.0
+Description: Cross-Site Scripting (XSS) via bypass of Angular's HTML sanitizer
+using crafted template expressions. Allows session hijacking.
+Status: UNPATCHED
+
+FINDING-006 [HIGH]
+CVE: CVE-2024-39338
+CVSS Score: 7.4 (High)
+Affected Component: axios v0.21.1
+Description: SSRF vulnerability via protocol-relative URL handling allows
+internal service requests to be forged through the application server.
+Status: UNPATCHED
+
+FINDING-007 [HIGH]
+CVE: CVE-2023-44487
+CVSS Score: 7.5 (High)
+Affected Component: HTTP/2 server implementation
+Description: HTTP/2 Rapid Reset Attack — enables large-scale DDoS. Affects
+Node.js HTTP/2 module and Express.js with HTTP/2 enabled.
+Status: PARTIALLY MITIGATED
+
+FINDING-008 [HIGH]
+CVE: CVE-2024-37890
+CVSS Score: 7.5 (High)
+Affected Component: ws (WebSocket) v8.17.0
+Description: Denial of Service via HTTP header with abnormally large values.
+Can crash WebSocket server process handling real-time connections.
+Status: UNPATCHED
+
+FINDING-009 [HIGH]
+CVE: CVE-2022-42889
+CVSS Score: 9.8 (High — marked High in scope)
+Affected Component: Apache Commons Text v1.9
+Description: RCE via variable interpolation in StringSubstitutor. Allows
+arbitrary command execution via crafted input strings.
+Status: UNPATCHED
+
+================================================================================
+SECTION 3 — MEDIUM FINDINGS
+================================================================================
+
+FINDING-010 [MEDIUM]
+CVE: CVE-2024-45296
+CVSS Score: 7.5 (Medium in context)
+Affected Component: path-to-regexp v0.1.7
+Description: Regular expression Denial of Service (ReDoS) via crafted URL path
+patterns. Causes catastrophic backtracking in route matching.
+Status: UNPATCHED
+
+FINDING-011 [MEDIUM]
+CVE: CVE-2024-28863
+CVSS Score: 6.5 (Medium)
+Affected Component: node-tar v6.2.0
+Description: Path traversal during extraction — crafted .tar archives can write
+files outside the intended extraction directory.
+Status: UNPATCHED
+
+================================================================================
+SECTION 4 — REMEDIATION TIMELINE
+================================================================================
+
+Priority 1 (Patch within 24h):  CVE-2021-44228, CVE-2022-22965, CVE-2024-29415
+Priority 2 (Patch within 72h):  CVE-2024-48949, CVE-2024-21490, CVE-2024-39338
+Priority 3 (Patch within 7d):   CVE-2023-44487, CVE-2024-37890, CVE-2022-42889
+Priority 4 (Patch within 30d):  CVE-2024-45296, CVE-2024-28863
+
+================================================================================
+END OF REPORT
+================================================================================

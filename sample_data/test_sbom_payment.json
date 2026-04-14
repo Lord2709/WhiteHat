@@ -1,0 +1,23 @@
+{
+  "name": "acme-payment-gateway",
+  "version": "3.2.1",
+  "description": "PCI-DSS scoped payment processing service",
+  "dependencies": {
+    "express": "4.18.2",
+    "axios": "0.21.1",
+    "lodash": "4.17.20",
+    "ws": "8.17.0",
+    "jsonwebtoken": "8.5.1",
+    "pg": "8.11.3",
+    "redis": "4.6.10",
+    "ip": "2.0.0",
+    "elliptic": "6.5.4",
+    "node-tar": "6.2.0"
+  },
+  "devDependencies": {
+    "cross-spawn": "7.0.3",
+    "path-to-regexp": "0.1.7",
+    "micromatch": "4.0.5",
+    "nanoid": "3.3.6"
+  }
+}

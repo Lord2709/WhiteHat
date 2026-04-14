@@ -1,0 +1,17 @@
+{
+  "name": "acme-data-pipeline",
+  "version": "2.1.0",
+  "description": "Internal Python data processing and ML pipeline service",
+  "dependencies": {
+    "django": "3.2.0",
+    "requests": "2.28.0",
+    "pillow": "9.0.0",
+    "cryptography": "38.0.0",
+    "paramiko": "2.10.3",
+    "numpy": "1.23.0",
+    "sqlalchemy": "1.4.40",
+    "celery": "5.2.7",
+    "pyyaml": "5.4.1",
+    "urllib3": "1.26.5"
+  }
+}
