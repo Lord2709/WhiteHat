@@ -7,34 +7,30 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
   const [vaUploading,setVaUploading]= useState(false);
   const [vaDragging, setVaDragging] = useState(false);
   const [dragging,   setDragging]   = useState(false);
-  const [sysInfo, setSysInfo] = useState(() => ({name:'payment-gateway',tier:'critical',regulatory:['PCI'],owner:'security-team',dependencies:[]}));
-  const [windows, setWindows] = useState(() => [{day:'Sunday',time:'02:00',duration_hours:4}]);
+  const [sysInfo, setSysInfo] = useState(() => ({name:'payment-api',tier:'critical',regulatory:['PCI','GDPR','SOX'],owner:'platform-security',dependencies:['auth-service','settlement-worker','fraud-scoring','merchant-portal','reporting-service']}));
+  const [windows, setWindows] = useState(() => [{day:'Sunday',time:'01:30',duration_hours:4},{day:'Wednesday',time:'23:00',duration_hours:2}]);
   const [team, setTeam] = useState(() => [
-    {name:'Alex Chen',   email:'alex@co.com',  expertise:['nodejs','security'], current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:20,work_days:['monday','tuesday','wednesday','thursday','friday']}},
-    {name:'Priya Sharma',email:'priya@co.com', expertise:['python','devops'],   current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:15,work_days:['monday','tuesday','wednesday','thursday','friday']}},
-    {name:'Marcus Webb', email:'marcus@co.com',expertise:['nodejs','react'],    current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:24,work_days:['monday','tuesday','wednesday','thursday','friday']}},
+    {name:'Ariana Patel', email:'ariana.patel@northstar.example', role:'Staff AppSec Engineer', expertise:['security','nodejs','jwt'], current_load:1, schedule:{available_hours_per_week:36,sprint_hours_remaining:20,work_days:['monday','tuesday','wednesday','thursday','friday']}},
+    {name:'Devon Kim',    email:'devon.kim@northstar.example',    role:'Senior Backend Engineer', expertise:['nodejs','express','postgres','redis'], current_load:2, schedule:{available_hours_per_week:40,sprint_hours_remaining:18,work_days:['monday','tuesday','wednesday','thursday','friday']}},
+    {name:'Mina Ortega',  email:'mina.ortega@northstar.example',  role:'SRE Engineer', expertise:['devops','kubernetes','monitoring'], current_load:1, schedule:{available_hours_per_week:40,sprint_hours_remaining:24,work_days:['monday','tuesday','wednesday','thursday','friday']}},
   ]);
   const [newMember, setNewMember] = useState({name:'',email:'',expertiseStr:'',sprintHours:20});
   const [apiKeys,  setApiKeys]   = useState({anthropic:'',gemini:''});
-  const [nlText, setNlText] = useState('');
-  const [vendorAdvisoriesText, setVendorAdvisoriesText] = useState('[]');
-  const [vendorLinesText, setVendorLinesText] = useState('');
-  const [internalDocsText, setInternalDocsText] = useState('[]');
-  const [internalLinesText, setInternalLinesText] = useState('');
-  const [dependencyGraphText, setDependencyGraphText] = useState('[]');
-  const [graphLinesText, setGraphLinesText] = useState('');
-  const [connectorMsg, setConnectorMsg] = useState('');
-  const [nlBusy, setNlBusy] = useState(false);
-  const [nlMsg, setNlMsg] = useState('');
-  const [teamSyncNote, setTeamSyncNote] = useState('');
+  const [vendorAdvisories, setVendorAdvisories] = useState([]);
+  const [internalDocs,     setInternalDocs]     = useState([]);
+  const [dependencyGraph,  setDependencyGraph]  = useState([]);
+  const [connectorStatus, setConnectorStatus] = useState({vendor:'',internal:'',graph:''});
+  const [sysInfoStatus,   setSysInfoStatus]   = useState('');
+  const [windowsStatus,   setWindowsStatus]   = useState('');
+  const [teamStatus,      setTeamStatus]      = useState('');
   const [envKeys,  setEnvKeys]   = useState({gemini:false,anthropic:false,nvd:false});
   const [showApiModal, setShowApiModal] = useState(false);
 
   const normalizeSystemInfo = raw => ({
-    name: raw?.name || 'payment-gateway',
+    name: raw?.name || 'payment-api',
     tier: raw?.tier || 'critical',
     regulatory: Array.isArray(raw?.regulatory) ? raw.regulatory : [],
-    owner: raw?.owner || 'security-team',
+    owner: raw?.owner || 'platform-security',
     dependencies: Array.isArray(raw?.dependencies) ? raw.dependencies : [],
   });
 
@@ -54,136 +50,42 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
     },
   });
 
-  const edgesToLines = edges => {
-    if (!Array.isArray(edges)) return '';
-    return edges
-      .map(e => `${e?.source || ''} -> ${e?.target || ''}`)
-      .filter(line => !line.startsWith(' ->'))
-      .join('\n');
-  };
-
-  const parseGraphLines = raw => {
-    const lines = (raw || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const out = [];
-    for (const line of lines) {
-      const chain = line.split(/\s*->\s*/).map(s => s.trim()).filter(Boolean);
-      if (chain.length < 2) continue;
-      for (let i = 0; i < chain.length - 1; i += 1) {
-        out.push({source: chain[i], target: chain[i + 1], relation: 'depends_on'});
-      }
-    }
-    const uniq = [];
-    const seen = new Set();
-    for (const e of out) {
-      const k = `${(e.source || '').toLowerCase()}|${(e.target || '').toLowerCase()}|${(e.relation || '').toLowerCase()}`;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      uniq.push(e);
-    }
-    return uniq;
-  };
-
-  const advisoriesToLines = advisories => {
-    if (!Array.isArray(advisories)) return '';
-    return advisories.map(a => [
-      a?.advisory_id || '',
-      a?.severity || 'medium',
-      Array.isArray(a?.cve_ids) ? a.cve_ids.join(',') : '',
-      Array.isArray(a?.affected_packages) ? a.affected_packages.join(',') : '',
-      a?.title || '',
-    ].join(' | ')).join('\n');
-  };
-
-  const parseAdvisoryLines = raw => {
-    const lines = (raw || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const advisories = [];
-    for (const line of lines) {
-      const [advisoryId, severity, cvesRaw, pkgsRaw, title] = line.split('|').map(s => s.trim());
-      advisories.push({
-        advisory_id: advisoryId || `ADV-${advisories.length + 1}`,
-        title: title || advisoryId || 'Vendor advisory',
-        severity: (severity || 'medium').toLowerCase(),
-        cve_ids: (cvesRaw || '').split(',').map(s => s.trim()).filter(Boolean),
-        affected_packages: (pkgsRaw || '').split(',').map(s => s.trim()).filter(Boolean),
-        summary: '',
-        url: '',
-        published: '',
-      });
-    }
-    return advisories;
-  };
-
-  const docsToLines = docs => {
-    if (!Array.isArray(docs)) return '';
-    return docs.map(d => [
-      d?.doc_id || '',
-      d?.title || '',
-      Array.isArray(d?.systems) ? d.systems.join(',') : '',
-      Array.isArray(d?.tags) ? d.tags.join(',') : '',
-      d?.content || '',
-    ].join(' | ')).join('\n');
-  };
-
-  const parseDocLines = raw => {
-    const lines = (raw || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const docs = [];
-    for (const line of lines) {
-      const [docId, title, systemsRaw, tagsRaw, content] = line.split('|').map(s => s.trim());
-      docs.push({
-        doc_id: docId || `DOC-${docs.length + 1}`,
-        title: title || docId || 'Internal note',
-        systems: (systemsRaw || '').split(',').map(s => s.trim()).filter(Boolean),
-        tags: (tagsRaw || '').split(',').map(s => s.trim()).filter(Boolean),
-        criticality: '',
-        content: content || '',
-      });
-    }
-    return docs;
-  };
-
   const regulatoryList = Array.isArray(sysInfo?.regulatory) ? sysInfo.regulatory : [];
+
   useEffect(()=>{
     fetch(`${API_URL}/api/env-status`).then(r=>r.json()).then(d=>{
       setEnvKeys({gemini:!!d.gemini_key_loaded, anthropic:!!d.anthropic_key_loaded, nvd:!!d.nvd_key_loaded});
     }).catch(()=>{});
-    // Load config from DB on mount
     fetch(`${API_URL}/api/config/load`).then(r=>r.ok?r.json():null).then(cfg=>{
-      if (cfg) {
-        if (cfg.packages && Object.keys(cfg.packages).length > 0) setPackages(cfg.packages);
-        if (cfg.va_cve_ids && cfg.va_cve_ids.length > 0) setVaCves(cfg.va_cve_ids);
-        if (cfg.system_info) setSysInfo(normalizeSystemInfo(cfg.system_info));
-        if (cfg.maintenance_windows && cfg.maintenance_windows.length > 0) setWindows(cfg.maintenance_windows);
-        if (cfg.team_members && cfg.team_members.length > 0) {
-          setTeam(cfg.team_members.map(normalizeTeamMember));
-        }
-        if (cfg.api_keys) setApiKeys(cfg.api_keys);
-        if (cfg.nl_text) setNlText(cfg.nl_text);
-        if (Array.isArray(cfg.vendor_advisories)) {
-          setVendorAdvisoriesText(JSON.stringify(cfg.vendor_advisories, null, 2));
-          setVendorLinesText(advisoriesToLines(cfg.vendor_advisories));
-        }
-        if (Array.isArray(cfg.internal_docs)) {
-          setInternalDocsText(JSON.stringify(cfg.internal_docs, null, 2));
-          setInternalLinesText(docsToLines(cfg.internal_docs));
-        }
-        if (Array.isArray(cfg.dependency_graph)) {
-          setDependencyGraphText(JSON.stringify(cfg.dependency_graph, null, 2));
-          setGraphLinesText(edgesToLines(cfg.dependency_graph));
-        }
-      }
+      if (!cfg) return;
+      if (cfg.packages && Object.keys(cfg.packages).length > 0) setPackages(cfg.packages);
+      if (cfg.va_cve_ids && cfg.va_cve_ids.length > 0) setVaCves(cfg.va_cve_ids);
+      if (cfg.system_info) setSysInfo(normalizeSystemInfo(cfg.system_info));
+      if (cfg.maintenance_windows && cfg.maintenance_windows.length > 0) setWindows(cfg.maintenance_windows);
+      if (cfg.team_members && cfg.team_members.length > 0) setTeam(cfg.team_members.map(normalizeTeamMember));
+      if (cfg.api_keys) setApiKeys(cfg.api_keys);
+      if (Array.isArray(cfg.vendor_advisories) && cfg.vendor_advisories.length) setVendorAdvisories(cfg.vendor_advisories);
+      if (Array.isArray(cfg.internal_docs) && cfg.internal_docs.length) setInternalDocs(cfg.internal_docs);
+      if (Array.isArray(cfg.dependency_graph) && cfg.dependency_graph.length) setDependencyGraph(cfg.dependency_graph);
     }).catch(()=>{});
-    // Auto-load team profiles from DB on mount
     fetch(`${API_URL}/api/team-profiles`).then(r=>r.ok?r.json():{items:[]}).then(d=>{
       if (Array.isArray(d.items) && d.items.length > 0) {
-        const imported = d.items.map(teamProfileToMember);
-        setTeam(imported);
-        setTeamSyncNote(`Auto-loaded ${imported.length} team profile(s) from database.`);
+        setTeam(d.items.map(teamProfileToMember));
+        setTeamStatus(`Auto-loaded ${d.items.length} team profiles from database.`);
       }
     }).catch(()=>{});
   }, []);
-  const fileRef = useRef(null);
-  const vaRef   = useRef(null);
-  const sampleRef = useRef(null);
+
+  const fileRef    = useRef(null);
+  const vaRef      = useRef(null);
+  const sysRef     = useRef(null);
+  const winRef     = useRef(null);
+  const teamRef    = useRef(null);
+  const vendorRef  = useRef(null);
+  const internalRef= useRef(null);
+  const graphRef   = useRef(null);
+
+  // ── File parsers ─────────────────────────────────────────────────────────────
 
   const parsePackageJson = txt => {
     try {
@@ -196,11 +98,27 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
     } catch { return {}; }
   };
 
-  const handleFile = f => {
+  const readJsonFile = (file, onParsed, onError) => {
+    const r = new FileReader();
+    r.onload = e => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        onParsed(parsed);
+      } catch {
+        onError && onError('Invalid JSON — check the file format.');
+      }
+    };
+    r.readAsText(file);
+  };
+
+  const handleSbomFile = f => {
     if (!f) return;
     setFileName(f.name);
     const r = new FileReader();
-    r.onload = e => setPackages(parsePackageJson(e.target.result));
+    r.onload = e => {
+      const pkgs = parsePackageJson(e.target.result);
+      setPackages(pkgs);
+    };
     r.readAsText(f);
   };
 
@@ -214,66 +132,96 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
       const resp = await fetch(`${API_URL}/api/upload-report`, {method:'POST', body:fd});
       const data = await resp.json();
       setVaCves(data.cve_ids || []);
-      if (data.llm_mapped) setVaLlmNote(`🤖 LLM mapped ${data.count} CVEs from report findings (no standard CVE IDs found)`);
-      else if (data.count > 0) setVaLlmNote(`✓ ${data.count} CVE IDs extracted directly from document`);
-      else setVaLlmNote('⚠ No CVEs found — add packages in SBOM or use LLM discovery');
+      if (data.llm_mapped) setVaLlmNote(`🤖 LLM mapped ${data.count} CVEs from report findings`);
+      else if (data.count > 0) setVaLlmNote(`✓ ${data.count} CVE IDs extracted from report`);
+      else setVaLlmNote('⚠ No CVEs found — ensure SBOM packages are loaded too');
     } catch {
-      // Fallback: parse as text client-side
       const r = new FileReader();
       r.onload = e => {
         const found = (e.target.result.match(/CVE-\d{4}-\d{4,7}/gi)||[]).filter((v,i,a)=>a.indexOf(v)===i);
         setVaCves(found.map(c=>c.toUpperCase()));
-        setVaLlmNote(found.length > 0 ? `✓ ${found.length} CVEs found (client-side parse)` : '⚠ No CVEs found in text');
+        setVaLlmNote(found.length > 0 ? `✓ ${found.length} CVEs found` : '⚠ No CVEs found in file');
       };
       r.readAsText(f);
     }
     setVaUploading(false);
   };
 
-  const fetchSampleBundle = async () => {
-    if (sampleRef.current) return sampleRef.current;
-    const resp = await fetch(`${API_URL}/api/sample-input`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-    const data = await resp.json();
-    sampleRef.current = data;
-    return data;
+  const handleSysInfoFile = f => {
+    if (!f) return;
+    readJsonFile(f,
+      parsed => { setSysInfo(normalizeSystemInfo(parsed)); setSysInfoStatus(`✓ Loaded from ${f.name}`); },
+      err    => setSysInfoStatus(`⚠ ${err}`)
+    );
   };
 
-  const applySampleSystem = data => {
-    if (data.system_info) setSysInfo(normalizeSystemInfo(data.system_info));
-    if (Array.isArray(data.team_members) && data.team_members.length) setTeam(data.team_members.map(normalizeTeamMember));
-    if (Array.isArray(data.maintenance_windows) && data.maintenance_windows.length) setWindows(data.maintenance_windows);
+  const handleWindowsFile = f => {
+    if (!f) return;
+    readJsonFile(f,
+      parsed => {
+        if (!Array.isArray(parsed)) { setWindowsStatus('⚠ Expected a JSON array of maintenance windows.'); return; }
+        setWindows(parsed);
+        setWindowsStatus(`✓ Loaded ${parsed.length} maintenance window(s) from ${f.name}`);
+      },
+      err => setWindowsStatus(`⚠ ${err}`)
+    );
   };
 
-  const loadSample = async () => {
-    try {
-      const data = await fetchSampleBundle();
-      setPackages(data.packages || {});
-      setFileName(`${data.package_filename || 'sample_package.json'} (${data.package_count || Object.keys(data.packages||{}).length} packages)`);
-      applySampleSystem(data);
-    } catch (e) {
-      setVaLlmNote(`⚠ Unable to load demo sample data: ${e.message}`);
-    }
+  const handleTeamFile = f => {
+    if (!f) return;
+    readJsonFile(f,
+      parsed => {
+        const arr = Array.isArray(parsed) ? parsed : parsed?.team || [];
+        if (!arr.length) { setTeamStatus('⚠ No team members found in file.'); return; }
+        setTeam(arr.map(normalizeTeamMember));
+        setTeamStatus(`✓ Loaded ${arr.length} team members from ${f.name}`);
+      },
+      err => setTeamStatus(`⚠ ${err}`)
+    );
   };
 
-  const loadSampleVa = async () => {
-    try {
-      const data = await fetchSampleBundle();
-      setVaCves(data.va_cve_ids || []);
-      setVaFile(`${data.va_filename || 'va_report_sample.txt'} (${data.va_count || (data.va_cve_ids||[]).length} matched CVEs)`);
-      if ((data.unmatched_va_count||0) > 0) {
-        setVaLlmNote(`✓ Loaded ${data.va_count} SBOM-matched CVEs from sample VA report; omitted ${data.unmatched_va_count} unrelated findings`);
-      } else {
-        setVaLlmNote(`✓ Loaded ${data.va_count || (data.va_cve_ids||[]).length} SBOM-matched CVEs from sample VA report`);
-      }
-    } catch (e) {
-      setVaLlmNote(`⚠ Unable to load demo VA report: ${e.message}`);
-    }
+  const handleVendorFile = f => {
+    if (!f) return;
+    readJsonFile(f,
+      parsed => {
+        const arr = Array.isArray(parsed) ? parsed : [];
+        setVendorAdvisories(arr);
+        setConnectorStatus(s=>({...s, vendor:`✓ Loaded ${arr.length} vendor advisories from ${f.name}`}));
+      },
+      err => setConnectorStatus(s=>({...s, vendor:`⚠ ${err}`}))
+    );
   };
 
+  const handleInternalFile = f => {
+    if (!f) return;
+    readJsonFile(f,
+      parsed => {
+        const arr = Array.isArray(parsed) ? parsed : [];
+        setInternalDocs(arr);
+        setConnectorStatus(s=>({...s, internal:`✓ Loaded ${arr.length} internal docs from ${f.name}`}));
+      },
+      err => setConnectorStatus(s=>({...s, internal:`⚠ ${err}`}))
+    );
+  };
+
+  const handleGraphFile = f => {
+    if (!f) return;
+    readJsonFile(f,
+      parsed => {
+        const arr = Array.isArray(parsed) ? parsed : [];
+        setDependencyGraph(arr);
+        const deps = Array.from(new Set(arr.map(e=>(e?.target||'').trim()).filter(Boolean)));
+        setSysInfo(s=>({...s, dependencies: deps.length ? deps : s.dependencies}));
+        setConnectorStatus(s=>({...s, graph:`✓ Loaded ${arr.length} edges from ${f.name} — synced ${deps.length} dependencies`}));
+      },
+      err => setConnectorStatus(s=>({...s, graph:`⚠ ${err}`}))
+    );
+  };
+
+  // ── Team helpers ──────────────────────────────────────────────────────────────
   const toggleReg = r => setSysInfo(s=>{
     const regs = Array.isArray(s.regulatory) ? s.regulatory : [];
-    return {...s,regulatory:regs.includes(r)?regs.filter(x=>x!==r):[...regs,r]};
+    return {...s, regulatory: regs.includes(r) ? regs.filter(x=>x!==r) : [...regs,r]};
   });
 
   const addMember = () => {
@@ -282,279 +230,137 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
     setTeam(t=>[...t,{name,email,expertise:expertiseStr.split(',').map(s=>s.trim()).filter(Boolean),current_load:0,schedule:{available_hours_per_week:40,sprint_hours_remaining:parseInt(sprintHours)||20,work_days:['monday','tuesday','wednesday','thursday','friday']}}]);
     setNewMember({name:'',email:'',expertiseStr:'',sprintHours:20});
   };
-  const removeMember = i => setTeam(t=>t.filter((_,j)=>j!==i));
+  const removeMember    = i => setTeam(t=>t.filter((_,j)=>j!==i));
   const updateSprintHours = (i,h) => setTeam(t=>t.map((m,j)=>j===i?{...m,schedule:{...m.schedule,sprint_hours_remaining:parseInt(h)||0}}:m));
 
-  const importTeamProfiles = async () => {
-    try {
-      const resp = await fetch(`${API_URL}/api/team-profiles`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      const imported = (Array.isArray(data.items) ? data.items : []).map(teamProfileToMember);
-      if (!imported.length) {
-        setTeamSyncNote('No saved team profiles found in database.');
-        return;
-      }
-      setTeam(imported);
-      setTeamSyncNote(`Imported ${imported.length} team profiles from database.`);
-    } catch (err) {
-      setTeamSyncNote(`Unable to import team profiles: ${err.message}`);
-    }
-  };
-
-  const parseConnectorJson = (raw, label) => {
-    const txt = (raw || '').trim();
-    if (!txt) return [];
-    let parsed = null;
-    try {
-      parsed = JSON.parse(txt);
-    } catch {
-      throw new Error(`${label} must be valid JSON array`);
-    }
-    if (!Array.isArray(parsed)) throw new Error(`${label} must be a JSON array`);
-    return parsed;
-  };
-
-  const parseConnectorJsonNoThrow = raw => {
-    try {
-      const parsed = JSON.parse((raw || '').trim() || '[]');
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const buildGraphFromLines = () => {
-    const edges = parseGraphLines(graphLinesText);
-    setDependencyGraphText(JSON.stringify(edges, null, 2));
-    setConnectorMsg(edges.length ? `Built ${edges.length} dependency edge(s) from simple input.` : 'No valid graph lines found. Use format: source -> target');
-  };
-
-  const buildAdvisoriesFromLines = () => {
-    const advisories = parseAdvisoryLines(vendorLinesText);
-    setVendorAdvisoriesText(JSON.stringify(advisories, null, 2));
-    setConnectorMsg(advisories.length ? `Built ${advisories.length} vendor advisory record(s) from simple input.` : 'No valid advisory lines found.');
-  };
-
-  const buildDocsFromLines = () => {
-    const docs = parseDocLines(internalLinesText);
-    setInternalDocsText(JSON.stringify(docs, null, 2));
-    setConnectorMsg(docs.length ? `Built ${docs.length} internal doc record(s) from simple input.` : 'No valid internal-doc lines found.');
-  };
-
-  const syncDependenciesFromGraph = () => {
-    const edges = parseConnectorJsonNoThrow(dependencyGraphText);
-    const deps = Array.from(new Set(edges.map(e => (e?.target || '').trim()).filter(Boolean)));
-    setSysInfo(s => ({...s, dependencies: deps}));
-    setConnectorMsg(deps.length ? `Synced ${deps.length} downstream dependencies from graph.` : 'No dependency targets found to sync.');
-  };
-
+  // ── Auto-save ─────────────────────────────────────────────────────────────────
   useEffect(() => {
-    // Auto-save config to DB (debounced: only save changes, not on every keystroke)
-    const saveTimer = setTimeout(() => {
+    const t = setTimeout(() => {
       fetch(`${API_URL}/api/config/save`, {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
-          packages,
-          va_cve_ids: vaCves,
-          system_info: sysInfo,
-          maintenance_windows: windows,
-          team_members: team,
-          vendor_advisories: parseConnectorJsonNoThrow(vendorAdvisoriesText),
-          internal_docs: parseConnectorJsonNoThrow(internalDocsText),
-          dependency_graph: parseConnectorJsonNoThrow(dependencyGraphText),
-          exploit_language: exploitLang,
-          api_keys: apiKeys,
-          nl_text: nlText,
+          packages, va_cve_ids: vaCves, system_info: sysInfo, maintenance_windows: windows,
+          team_members: team, vendor_advisories: vendorAdvisories, internal_docs: internalDocs,
+          dependency_graph: dependencyGraph, exploit_language: exploitLang, api_keys: apiKeys,
         }),
       }).catch(()=>{});
-    }, 1000);
-    return () => clearTimeout(saveTimer);
-  }, [packages, vaCves, sysInfo, windows, team, exploitLang, apiKeys, nlText, vendorAdvisoriesText, internalDocsText, dependencyGraphText]);
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [packages, vaCves, sysInfo, windows, team, exploitLang, apiKeys, vendorAdvisories, internalDocs, dependencyGraph]);
 
   const hasApiKey = !!(apiKeys.anthropic || apiKeys.gemini || envKeys.gemini || envKeys.anthropic);
-  const canRun = Object.keys(packages).length > 0 || vaCves.length > 0;
+  const canRun    = Object.keys(packages).length > 0 || vaCves.length > 0;
 
   const handleRun = () => {
-    let vendorAdvisories = [];
-    let internalDocs = [];
-    let dependencyGraph = [];
-    try {
-      vendorAdvisories = parseConnectorJson(vendorAdvisoriesText, 'Vendor advisories');
-      internalDocs = parseConnectorJson(internalDocsText, 'Internal docs');
-      dependencyGraph = parseConnectorJson(dependencyGraphText, 'Dependency graph');
-      setConnectorMsg('');
-    } catch (err) {
-      setConnectorMsg(err.message);
-      return;
-    }
-    onRun({packages, va_cve_ids:vaCves, system_info:sysInfo, maintenance_windows:windows,
-           team_members:team, vendor_advisories:vendorAdvisories, internal_docs:internalDocs, dependency_graph:dependencyGraph,
-           exploit_language:exploitLang,
-           anthropic_api_key:apiKeys.anthropic||null, gemini_api_key:apiKeys.gemini||null});
+    onRun({
+      packages, va_cve_ids: vaCves, system_info: sysInfo, maintenance_windows: windows,
+      team_members: team, vendor_advisories: vendorAdvisories, internal_docs: internalDocs,
+      dependency_graph: dependencyGraph, exploit_language: exploitLang,
+      anthropic_api_key: apiKeys.anthropic||null, gemini_api_key: apiKeys.gemini||null,
+    });
   };
 
-  const applyNaturalLanguageConfig = async () => {
-    if (!nlText.trim()) {
-      setNlMsg('Type a short description first, for example: "Critical payment system, PCI + SOX, patch Sunday 1am for 3 hours".');
-      return;
-    }
-    setNlBusy(true);
-    setNlMsg('');
-    try {
-      const resp = await fetch(`${API_URL}/api/parse-config-nl`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          text: nlText,
-          current_system_info: sysInfo,
-          current_maintenance_windows: windows,
-          anthropic_api_key: apiKeys.anthropic || null,
-          gemini_api_key: apiKeys.gemini || null,
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
-      if (data.system_info) setSysInfo(normalizeSystemInfo(data.system_info));
-      if (Array.isArray(data.maintenance_windows) && data.maintenance_windows.length) setWindows(data.maintenance_windows);
-      setNlMsg(data.assistant_message || 'Configuration updated from natural-language input.');
-    } catch (err) {
-      setNlMsg(`Unable to parse natural-language config: ${err.message}`);
-    }
-    setNlBusy(false);
+  // ── Reusable file upload zone ─────────────────────────────────────────────────
+  const FileUploadZone = ({label, hint, accept, inputRef, onFile, status, icon, variant}) => {
+    // variant: 'primary' (teal) or 'secondary' (purple). Defaults to primary.
+    const [drag, setDrag] = useState(false);
+    const isPurple = variant === 'secondary';
+    const rgb      = isPurple ? '124,58,237' : '0,212,170';
+    const borderColor = drag ? `rgba(${rgb},.7)` : `rgba(${rgb},.25)`;
+    return (
+      <div>
+        <div
+          onDragOver={e=>{e.preventDefault();setDrag(true)}}
+          onDragLeave={()=>setDrag(false)}
+          onDrop={e=>{e.preventDefault();setDrag(false);onFile(e.dataTransfer.files[0])}}
+          onClick={()=>inputRef.current.click()}
+          style={{
+            border:`2px dashed ${borderColor}`,
+            borderRadius:'var(--radius)',
+            padding:'18px 16px',
+            textAlign:'center',
+            cursor:'pointer',
+            transition:'all .2s',
+            background: drag ? `rgba(${rgb},.1)` : 'rgba(255,255,255,.02)',
+          }}>
+          <div style={{fontSize:24,marginBottom:6}}>{icon||'📂'}</div>
+          <div style={{fontSize:13,fontWeight:600,color:'var(--text0)',marginBottom:3}}>{label}</div>
+          <div style={{fontSize:11,color:'var(--text2)'}}>{hint}</div>
+          <input ref={inputRef} type="file" accept={accept||'.json'} style={{display:'none'}} onChange={e=>onFile(e.target.files[0])}/>
+        </div>
+        {status && (
+          <div style={{
+            marginTop:7, padding:'5px 10px', borderRadius:6, fontSize:11,
+            background: status.startsWith('✓') ? 'rgba(16,185,129,.1)' : 'rgba(245,158,11,.1)',
+            color:       status.startsWith('✓') ? '#6ee7b7' : '#fbbf24',
+            border:`1px solid ${status.startsWith('✓') ? 'rgba(16,185,129,.25)' : 'rgba(245,158,11,.25)'}`,
+          }}>{status}</div>
+        )}
+      </div>
+    );
   };
 
   return (
     <div className="page">
+
+      {/* ── Header ── */}
       <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:26,flexWrap:'wrap',gap:12}}>
         <div>
           <div className="page-title">Configure Analysis</div>
-          <div className="page-sub">Upload SBOM + VA report, define your system, set team schedule</div>
+          <div className="page-sub">Upload dataset files to configure the agentic pipeline</div>
         </div>
         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8}}>
-          {!hasApiKey&&<div style={{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#fcd34d',display:'flex',alignItems:'center',gap:6}}>
-            ⚠ No Gemini or Anthropic key loaded — verified-data mode will still run NVD/OSV lookups and deterministic fallbacks
-          </div>}
-          {(envKeys.gemini||envKeys.anthropic)&&<div style={{background:'rgba(16,185,129,.1)',border:'1px solid rgba(16,185,129,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#6ee7b7',display:'flex',alignItems:'center',gap:6}}>
-            ✓ Server .env: {envKeys.gemini&&'Gemini'}{envKeys.gemini&&envKeys.anthropic&&' + '}{envKeys.anthropic&&'Anthropic'} key loaded{envKeys.nvd&&' + NVD'}
-          </div>}
-          {!envKeys.nvd&&(envKeys.gemini||envKeys.anthropic)&&<div style={{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#fcd34d',display:'flex',alignItems:'center',gap:6}}>
-            ⚠ No NVD_API_KEY — CVSS fetch limited to 5 req/30s. Add key to .env to prevent NVD PENDING on multi-CVE scans.
-          </div>}
+          {(envKeys.gemini||envKeys.anthropic) && (
+            <div style={{background:'rgba(16,185,129,.1)',border:'1px solid rgba(16,185,129,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#6ee7b7',display:'flex',alignItems:'center',gap:6}}>
+              ✓ Server .env: {envKeys.gemini&&'Gemini'}{envKeys.gemini&&envKeys.anthropic&&' + '}{envKeys.anthropic&&'Anthropic'} key loaded{envKeys.nvd&&' + NVD'}
+            </div>
+          )}
+          {!envKeys.nvd && (envKeys.gemini||envKeys.anthropic) && (
+            <div style={{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#fcd34d',display:'flex',alignItems:'center',gap:6}}>
+              ⚠ No NVD_API_KEY — add to .env to prevent NVD PENDING on multi-CVE scans
+            </div>
+          )}
           <div style={{display:'flex',gap:10}}>
-            <button className="btn btn-outline btn-sm" onClick={()=>setShowApiModal(true)}><Key/> {(envKeys.gemini||envKeys.anthropic)?'✓ .env Keys Active':'API Keys Optional'}</button>
-            <button className="btn btn-primary" disabled={!canRun} onClick={handleRun} title={!hasApiKey?'Runs in verified-data mode without Gemini/Anthropic; add a key for LLM research and PoCs.':undefined}><Play/> Run Agentic Analysis</button>
+            <button className="btn btn-outline btn-sm" onClick={()=>setShowApiModal(true)}>
+              <Key/> {(envKeys.gemini||envKeys.anthropic)?'✓ .env Keys Active':'API Keys'}
+            </button>
+            <button className="btn btn-primary" disabled={!canRun} onClick={handleRun}>
+              <Play/> Run Agentic Analysis
+            </button>
           </div>
-        </div>
-      </div>
-
-      <div className="card" style={{marginBottom:18}}>
-        <div className="card-header"><span>💬</span><span className="card-title">Config Chat</span></div>
-        <div className="card-body" style={{display:'grid',gap:10}}>
-          <div className="section-label">Describe system, regulations, and maintenance in plain English</div>
-          <textarea
-            value={nlText}
-            onChange={e=>setNlText(e.target.value)}
-            placeholder="Example: Payment API for checkout, owner platform-security, critical tier, PCI + GDPR, depends on stripe and redis, patch on Sunday at 01:00 for 3 hours"
-            style={{minHeight:90,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
-          />
-          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-            <button className="btn btn-primary btn-sm" onClick={applyNaturalLanguageConfig} disabled={nlBusy}>{nlBusy?'Parsing...':'Apply from Chat'}</button>
-            <button className="btn btn-outline btn-sm" onClick={()=>setNlText('')}>Clear</button>
-          </div>
-          {nlMsg&&<div style={{fontSize:12,color:'var(--text2)'}}>{nlMsg}</div>}
-        </div>
-      </div>
-
-      <div className="card" style={{marginBottom:18}}>
-        <div className="card-header"><span>🔌</span><span className="card-title">Connector Inputs (Phase 2)</span></div>
-        <div className="card-body" style={{display:'grid',gap:10}}>
-          <div className="section-label">Vendor advisories JSON array</div>
-          <textarea
-            value={vendorAdvisoriesText}
-            onChange={e=>setVendorAdvisoriesText(e.target.value)}
-            placeholder='[{"advisory_id":"ADV-2026-001","cve_ids":["CVE-2026-1234"],"affected_packages":["axios"],"severity":"high","title":"Vendor patch note"}]'
-            style={{minHeight:90,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
-          />
-          <div className="section-label">Simple advisories input (advisory_id | severity | cves | packages | title)</div>
-          <textarea
-            value={vendorLinesText}
-            onChange={e=>setVendorLinesText(e.target.value)}
-            placeholder={'ADV-2026-001 | high | CVE-2026-1234,CVE-2026-5678 | axios,express | Vendor patch note'}
-            style={{minHeight:74,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
-          />
-          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-            <button className="btn btn-outline btn-sm" onClick={buildAdvisoriesFromLines}>Build Advisory JSON</button>
-            <button className="btn btn-outline btn-sm" onClick={()=>setVendorLinesText('ADV-2026-001 | high | CVE-2026-1234 | axios | Axios security fix')}>Load Advisory Example</button>
-          </div>
-          <div className="section-label">Internal docs JSON array</div>
-          <textarea
-            value={internalDocsText}
-            onChange={e=>setInternalDocsText(e.target.value)}
-            placeholder='[{"doc_id":"DOC-SEC-01","title":"Payment Service Threat Notes","systems":["payment-api","reporting"],"tags":["pci"],"content":"axios path used in checkout flow"}]'
-            style={{minHeight:90,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
-          />
-          <div className="section-label">Simple internal-doc input (doc_id | title | systems | tags | content)</div>
-          <textarea
-            value={internalLinesText}
-            onChange={e=>setInternalLinesText(e.target.value)}
-            placeholder={'DOC-SEC-01 | Payment Threat Notes | payment-api,reporting | pci,checkout | axios used in checkout flow'}
-            style={{minHeight:74,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
-          />
-          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-            <button className="btn btn-outline btn-sm" onClick={buildDocsFromLines}>Build Internal Docs JSON</button>
-            <button className="btn btn-outline btn-sm" onClick={()=>setInternalLinesText('DOC-SEC-01 | Payment Threat Notes | payment-api,reporting | pci | axios used in checkout flow')}>Load Docs Example</button>
-          </div>
-          <div className="section-label">Dependency graph JSON array</div>
-          <textarea
-            value={dependencyGraphText}
-            onChange={e=>setDependencyGraphText(e.target.value)}
-            placeholder='[{"source":"axios","target":"payment-api","relation":"depends_on"},{"source":"payment-api","target":"reporting","relation":"calls"}]'
-            style={{minHeight:90,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
-          />
-          <div className="section-label">Simple graph input (one chain per line)</div>
-          <textarea
-            value={graphLinesText}
-            onChange={e=>setGraphLinesText(e.target.value)}
-            placeholder={'axios -> payment-api -> reporting\nexpress -> web-gateway -> auth-service'}
-            style={{minHeight:80,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
-          />
-          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-            <button className="btn btn-outline btn-sm" onClick={buildGraphFromLines}>Build JSON from Lines</button>
-            <button className="btn btn-outline btn-sm" onClick={syncDependenciesFromGraph}>Sync Dependencies from Graph</button>
-            <button className="btn btn-outline btn-sm" onClick={()=>setGraphLinesText('axios -> payment-api -> reporting\njsonwebtoken -> auth-service')}>Load Example</button>
-          </div>
-          <div style={{fontSize:12,color:'var(--text2)'}}>These connector inputs are stored in DB and used to enrich CVE matching and dependency impact.</div>
-          {connectorMsg&&<div style={{fontSize:12,color:'#fca5a5'}}>{connectorMsg}</div>}
         </div>
       </div>
 
       <div className="config-grid">
-        {/* LEFT */}
+        {/* ══ LEFT COLUMN ══ */}
         <div style={{display:'flex',flexDirection:'column',gap:18}}>
 
           {/* SBOM */}
           <div className="card">
             <div className="card-header"><span>📦</span><span className="card-title">SBOM / Package Input</span></div>
-            <div className="card-body">
-              <div className="section-label">Upload package.json or SBOM</div>
-              <div className={`drop-zone${dragging?' drag-over':''}`}
+            <div className="card-body" style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div
                 onDragOver={e=>{e.preventDefault();setDragging(true)}}
                 onDragLeave={()=>setDragging(false)}
-                onDrop={e=>{e.preventDefault();setDragging(false);handleFile(e.dataTransfer.files[0])}}
-                onClick={()=>fileRef.current.click()}>
+                onDrop={e=>{e.preventDefault();setDragging(false);handleSbomFile(e.dataTransfer.files[0])}}
+                onClick={()=>fileRef.current.click()}
+                className={`drop-zone${dragging?' drag-over':''}`}>
                 <div className="drop-zone-icon">📂</div>
-                <div className="drop-zone-title">{fileName||'Drop package.json / SBOM here'}</div>
-                <div className="drop-zone-sub">{fileName?`${Object.keys(packages).length} packages loaded`:'or click to browse'}</div>
-                <input ref={fileRef} type="file" accept=".json" style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
+                <div className="drop-zone-title">{fileName||'Upload package.json'}</div>
+                <div className="drop-zone-sub">
+                  {fileName ? `${Object.keys(packages).length} packages loaded` : 'Drop file or click to browse — test_dataset_enterprise_2026/package.json'}
+                </div>
+                <input ref={fileRef} type="file" accept=".json" style={{display:'none'}} onChange={e=>handleSbomFile(e.target.files[0])}/>
               </div>
-              <div style={{textAlign:'center',margin:'10px 0',color:'var(--text3)',fontSize:11}}>— or —</div>
-              <button className="btn btn-outline" style={{width:'100%'}} onClick={loadSample}>⚡ Load Demo SBOM</button>
-              {Object.keys(packages).length>0 && (
-                <div style={{marginTop:12}}>
+              {Object.keys(packages).length > 0 && (
+                <div>
                   <div className="section-label">Packages ({Object.keys(packages).length})</div>
-                  <div className="packages-preview">{Object.entries(packages).map(([k,v])=><div key={k} className="pkg-row"><span className="pkg-name">{k}</span><span className="pkg-ver">{v}</span></div>)}</div>
+                  <div className="packages-preview">
+                    {Object.entries(packages).map(([k,v])=>(
+                      <div key={k} className="pkg-row"><span className="pkg-name">{k}</span><span className="pkg-ver">{v}</span></div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -562,14 +368,17 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
 
           {/* VA Report */}
           <div className="card">
-            <div className="card-header"><span>📋</span><span className="card-title">Vulnerability Assessment Report</span><span style={{fontSize:11,color:'#a78bfa',marginLeft:'auto'}}>optional</span></div>
-            <div className="card-body">
-              <div className="section-label">Upload VA/Pentest Report — CVE IDs extracted automatically</div>
-              <div className={`va-drop-zone${vaDragging?' drag-over':''}`}
+            <div className="card-header">
+              <span>📋</span><span className="card-title">Vulnerability Assessment Report</span>
+              <span style={{fontSize:11,color:'#a78bfa',marginLeft:'auto'}}>optional</span>
+            </div>
+            <div className="card-body" style={{display:'flex',flexDirection:'column',gap:10}}>
+              <div
                 onDragOver={e=>{e.preventDefault();setVaDragging(true)}}
                 onDragLeave={()=>setVaDragging(false)}
                 onDrop={e=>{e.preventDefault();setVaDragging(false);handleVaFile(e.dataTransfer.files[0])}}
-                onClick={()=>vaRef.current.click()}>
+                onClick={()=>vaRef.current.click()}
+                className={`va-drop-zone${vaDragging?' drag-over':''}`}>
                 {vaUploading ? (
                   <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
                     <div className="spinner" style={{width:24,height:24}}/>
@@ -578,17 +387,25 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
                 ) : (
                   <>
                     <div style={{fontSize:28,marginBottom:8}}>📄</div>
-                    <div style={{fontSize:13,fontWeight:600,color:'var(--text0)',marginBottom:3}}>{vaFile||'Drop VA Report here (PDF or .txt)'}</div>
-                    <div style={{fontSize:11,color:'var(--text2)'}}>{vaFile?`${vaCves.length} CVE IDs extracted`:'CVE IDs parsed automatically — supports VA-01/VULN-1 style via LLM'}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:'var(--text0)',marginBottom:3}}>
+                      {vaFile||'Upload VA Report (.txt / .pdf)'}
+                    </div>
+                    <div style={{fontSize:11,color:'var(--text2)'}}>
+                      {vaFile ? `${vaCves.length} CVE IDs extracted` : 'test_dataset_enterprise_2026/va_report_q2_2026.txt'}
+                    </div>
                   </>
                 )}
                 <input ref={vaRef} type="file" accept=".pdf,.txt,.csv,.html,.xml" style={{display:'none'}} onChange={e=>handleVaFile(e.target.files[0])}/>
               </div>
-              {vaLlmNote&&<div style={{marginTop:8,padding:'6px 10px',borderRadius:6,fontSize:11,background:vaLlmNote.startsWith('🤖')?'rgba(124,58,237,.12)':vaLlmNote.startsWith('⚠')?'rgba(245,158,11,.1)':'rgba(16,185,129,.1)',color:vaLlmNote.startsWith('🤖')?'#a78bfa':vaLlmNote.startsWith('⚠')?'#fbbf24':'#6ee7b7',border:`1px solid ${vaLlmNote.startsWith('🤖')?'rgba(124,58,237,.3)':vaLlmNote.startsWith('⚠')?'rgba(245,158,11,.25)':'rgba(16,185,129,.25)'}`}}>{vaLlmNote}</div>}
-              <div style={{textAlign:'center',margin:'10px 0',color:'var(--text3)',fontSize:11}}>— or —</div>
-              <button className="btn btn-purple btn-sm" style={{width:'100%'}} onClick={loadSampleVa}>📋 Load Demo VA Report</button>
-              {vaCves.length>0 && (
-                <div style={{marginTop:12}}>
+              {vaLlmNote && (
+                <div style={{padding:'6px 10px',borderRadius:6,fontSize:11,
+                  background: vaLlmNote.startsWith('🤖')?'rgba(124,58,237,.12)':vaLlmNote.startsWith('⚠')?'rgba(245,158,11,.1)':'rgba(16,185,129,.1)',
+                  color:       vaLlmNote.startsWith('🤖')?'#a78bfa':vaLlmNote.startsWith('⚠')?'#fbbf24':'#6ee7b7',
+                  border:`1px solid ${vaLlmNote.startsWith('🤖')?'rgba(124,58,237,.3)':vaLlmNote.startsWith('⚠')?'rgba(245,158,11,.25)':'rgba(16,185,129,.25)'}`
+                }}>{vaLlmNote}</div>
+              )}
+              {vaCves.length > 0 && (
+                <div>
                   <div className="section-label">Extracted CVE IDs ({vaCves.length})</div>
                   <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>
                     {vaCves.map(c=><span key={c} className="cve-pill">{c}</span>)}
@@ -598,12 +415,66 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
             </div>
           </div>
 
+          {/* Team Profiles */}
+          <div className="card">
+            <div className="card-header"><span>👥</span><span className="card-title">Dev Team & Sprint Schedule</span></div>
+            <div className="card-body" style={{display:'flex',flexDirection:'column',gap:12}}>
+              <FileUploadZone
+                label="Upload team_profiles.json"
+                hint="test_dataset_enterprise_2026/team_profiles.json — bulk-imports all members"
+                icon="👤"
+                accept=".json"
+                inputRef={teamRef}
+                onFile={handleTeamFile}
+                status={teamStatus}
+              />
+              {team.length > 0 && (
+                <div style={{display:'flex',flexDirection:'column',gap:7}}>
+                  {team.map((m,i)=>(
+                    <div key={i} className="team-member-item">
+                      <div style={{flex:1,minWidth:0}}>
+                        <div className="member-name">{m.name} <span style={{fontSize:10,color:'var(--text3)'}}>— {m.email}</span></div>
+                        {!!m.role && <div style={{fontSize:10,color:'var(--text3)',marginTop:2}}>{m.role}</div>}
+                        <div className="member-skills">{m.expertise.map(e=><span key={e} className="skill-tag">{e}</span>)}</div>
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:8,flexShrink:0}}>
+                        <div style={{textAlign:'center'}}>
+                          <div style={{fontSize:9,color:'var(--text3)',marginBottom:2}}>SPRINT HRS</div>
+                          <input className="sprint-input" type="number" min="0" max="80"
+                            value={m.schedule.sprint_hours_remaining}
+                            onChange={e=>updateSprintHours(i,e.target.value)}/>
+                        </div>
+                        <button className="btn btn-ghost" onClick={()=>removeMember(i)}><X/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Manual add */}
+              <div style={{borderTop:'1px solid var(--border2)',paddingTop:12}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',letterSpacing:.8,marginBottom:8}}>Add Member Manually</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                  <div className="field"><label>Name</label><input value={newMember.name} onChange={e=>setNewMember(m=>({...m,name:e.target.value}))} placeholder="Jane Doe"/></div>
+                  <div className="field"><label>Email</label><input value={newMember.email} onChange={e=>setNewMember(m=>({...m,email:e.target.value}))} placeholder="jane@co.com"/></div>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:8,marginTop:8}}>
+                  <div className="field"><label>Skills (comma-separated)</label><input value={newMember.expertiseStr} onChange={e=>setNewMember(m=>({...m,expertiseStr:e.target.value}))} placeholder="nodejs, python, security"/></div>
+                  <div className="field"><label>Sprint Hrs</label><input type="number" min="0" max="80" value={newMember.sprintHours} onChange={e=>setNewMember(m=>({...m,sprintHours:e.target.value}))} placeholder="20"/></div>
+                </div>
+                <button className="btn btn-outline btn-sm" style={{width:'100%',marginTop:10}} onClick={addMember}><Plus/> Add Member</button>
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn btn-outline btn-sm" style={{flex:1}} onClick={onGoTeamPage}>Manage Profiles DB</button>
+              </div>
+            </div>
+          </div>
+
           {/* Exploit Language */}
           <div className="card">
-            <div className="card-header"><span>💣</span><span className="card-title">Exploit Generation Settings</span></div>
+            <div className="card-header"><span>💣</span><span className="card-title">PoC Generation Language</span></div>
             <div className="card-body">
-              <div className="section-label">PoC Language (Gemini generates in this language)</div>
-              <div style={{display:'flex',gap:8,marginTop:6}}>
+              <div className="section-label">Gemini generates PoC in this language (on-demand per CVE)</div>
+              <div style={{display:'flex',gap:8,marginTop:8}}>
                 {['python','bash','javascript'].map(l=>(
                   <label key={l} className={`checkbox-item${exploitLang===l?' checked':''}`} style={{flex:1,justifyContent:'center'}}>
                     <input type="radio" checked={exploitLang===l} onChange={()=>setExploitLang(l)} style={{display:'none'}}/>
@@ -611,67 +482,32 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
                   </label>
                 ))}
               </div>
-              <div style={{marginTop:10,fontSize:11,color:'var(--text3)',lineHeight:1.6}}>
-                Exploits use the exact POCme prompt: <em>"Senior Vulnerability Researcher for VDP-authorized verification"</em>
-              </div>
             </div>
           </div>
 
-          {/* Team */}
-          <div className="card">
-            <div className="card-header"><span>👥</span><span className="card-title">Dev Team & Sprint Schedule</span></div>
-            <div className="card-body">
-              <div className="section-label">Members, Skills & Sprint Capacity</div>
-              <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
-                <button className="btn btn-outline btn-sm" onClick={importTeamProfiles}>Import Saved Team Profiles</button>
-                <button className="btn btn-outline btn-sm" onClick={onGoTeamPage}>Manage Team Profiles</button>
-              </div>
-              {teamSyncNote && (
-                <div style={{marginBottom:10,fontSize:11,color:'var(--text2)'}}>{teamSyncNote}</div>
-              )}
-              <div style={{display:'flex',flexDirection:'column',gap:7,marginBottom:12}}>
-                {team.map((m,i)=>(
-                  <div key={i} className="team-member-item">
-                    <div style={{flex:1,minWidth:0}}>
-                      <div className="member-name">{m.name} <span style={{fontSize:10,color:'var(--text3)'}}>— {m.email}</span></div>
-                      {!!m.role && <div style={{fontSize:10,color:'var(--text3)',marginTop:2}}>Role: {m.role}</div>}
-                      <div className="member-skills">{m.expertise.map(e=><span key={e} className="skill-tag">{e}</span>)}</div>
-                    </div>
-                    <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:8,flexShrink:0}}>
-                      <div style={{textAlign:'center'}}>
-                        <div style={{fontSize:9,color:'var(--text3)',marginBottom:2}}>SPRINT HRS</div>
-                        <input className="sprint-input" type="number" min="0" max="80"
-                          value={m.schedule.sprint_hours_remaining}
-                          onChange={e=>updateSprintHours(i,e.target.value)}/>
-                      </div>
-                      <button className="btn btn-ghost" onClick={()=>removeMember(i)}><X/></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                <div className="field"><label>Name</label><input value={newMember.name} onChange={e=>setNewMember(m=>({...m,name:e.target.value}))} placeholder="Jane Doe"/></div>
-                <div className="field"><label>Email</label><input value={newMember.email} onChange={e=>setNewMember(m=>({...m,email:e.target.value}))} placeholder="jane@co.com"/></div>
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:8,marginTop:8}}>
-                <div className="field"><label>Skills (comma-separated)</label><input value={newMember.expertiseStr} onChange={e=>setNewMember(m=>({...m,expertiseStr:e.target.value}))} placeholder="nodejs, python, security"/></div>
-                <div className="field"><label>Sprint Hrs</label><input type="number" min="0" max="80" value={newMember.sprintHours} onChange={e=>setNewMember(m=>({...m,sprintHours:e.target.value}))} placeholder="20"/></div>
-              </div>
-              <button className="btn btn-outline btn-sm" style={{width:'100%',marginTop:10}} onClick={addMember}><Plus/> Add Team Member</button>
-            </div>
-          </div>
         </div>
 
-        {/* RIGHT */}
+        {/* ══ RIGHT COLUMN ══ */}
         <div style={{display:'flex',flexDirection:'column',gap:18}}>
 
-          {/* System Info */}
+          {/* System Configuration */}
           <div className="card">
             <div className="card-header"><span>🏢</span><span className="card-title">System Configuration</span></div>
-            <div className="card-body">
+            <div className="card-body" style={{display:'flex',flexDirection:'column',gap:12}}>
+              <FileUploadZone
+                label="Upload system_info.json"
+                hint="test_dataset_enterprise_2026/system_info.json — auto-fills all fields below"
+                icon="🏢"
+                accept=".json"
+                inputRef={sysRef}
+                onFile={handleSysInfoFile}
+                status={sysInfoStatus}
+              />
               <div className="field-group">
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                  <div className="field"><label>System Name</label><input value={sysInfo.name} onChange={e=>setSysInfo(s=>({...s,name:e.target.value}))} placeholder="payment-gateway"/></div>
+                  <div className="field"><label>System Name</label>
+                    <input value={sysInfo.name} onChange={e=>setSysInfo(s=>({...s,name:e.target.value}))} placeholder="payment-api"/>
+                  </div>
                   <div className="field"><label>Criticality Tier</label>
                     <select value={sysInfo.tier} onChange={e=>setSysInfo(s=>({...s,tier:e.target.value}))}>
                       <option value="critical">Critical (×3.0)</option>
@@ -680,9 +516,11 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
                     </select>
                   </div>
                 </div>
-                <div className="field"><label>Owner</label><input value={sysInfo.owner} onChange={e=>setSysInfo(s=>({...s,owner:e.target.value}))} placeholder="security-team"/></div>
+                <div className="field"><label>Owner</label>
+                  <input value={sysInfo.owner} onChange={e=>setSysInfo(s=>({...s,owner:e.target.value}))} placeholder="security-team"/>
+                </div>
                 <div className="field">
-                  <label>Regulatory Exposure (×2.0 multiplier)</label>
+                  <label>Regulatory Exposure (×2.0 score multiplier)</label>
                   <div className="checkbox-group" style={{marginTop:4}}>
                     {['PCI','SOX','HIPAA','GDPR','FedRAMP'].map(r=>(
                       <label key={r} className={`checkbox-item${regulatoryList.includes(r)?' checked':''}`}>
@@ -691,7 +529,9 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
                     ))}
                   </div>
                 </div>
-                <div className="field"><label>Known Downstream Dependencies</label><input value={sysInfo.dependencies.join(', ')} onChange={e=>setSysInfo(s=>({...s,dependencies:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)}))} placeholder="auth-service, reporting-service"/></div>
+                <div className="field"><label>Downstream Dependencies</label>
+                  <input value={sysInfo.dependencies.join(', ')} onChange={e=>setSysInfo(s=>({...s,dependencies:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)}))} placeholder="auth-service, reporting-service"/>
+                </div>
               </div>
             </div>
           </div>
@@ -699,25 +539,98 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
           {/* Maintenance Windows */}
           <div className="card">
             <div className="card-header"><span>🕐</span><span className="card-title">Maintenance Windows</span></div>
-            <div className="card-body">
-              <div className="section-label">Scheduled Downtime for Patching</div>
-              <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:10}}>
+            <div className="card-body" style={{display:'flex',flexDirection:'column',gap:12}}>
+              <FileUploadZone
+                label="Upload maintenance_windows.json"
+                hint="test_dataset_enterprise_2026/maintenance_windows.json"
+                icon="🗓️"
+                accept=".json"
+                inputRef={winRef}
+                onFile={handleWindowsFile}
+                status={windowsStatus}
+              />
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
                 {windows.map((w,i)=>(
                   <div key={i} className="window-item">
                     <span>🗓️</span>
-                    <select value={w.day} onChange={e=>{const ww=[...windows];ww[i]={...ww[i],day:e.target.value};setWindows(ww)}} style={{background:'var(--bg2)',border:'1px solid var(--border2)',color:'var(--text0)',padding:'5px 10px',borderRadius:6,fontSize:12,flex:1}}>
+                    <select value={w.day} onChange={e=>{const ww=[...windows];ww[i]={...ww[i],day:e.target.value};setWindows(ww)}}
+                      style={{background:'var(--bg2)',border:'1px solid var(--border2)',color:'var(--text0)',padding:'5px 10px',borderRadius:6,fontSize:12,flex:1}}>
                       {['Sunday','Saturday','Monday','Tuesday','Wednesday','Thursday','Friday'].map(d=><option key={d}>{d}</option>)}
                     </select>
-                    <input type="time" value={w.time} onChange={e=>{const ww=[...windows];ww[i]={...ww[i],time:e.target.value};setWindows(ww)}} style={{background:'var(--bg2)',border:'1px solid var(--border2)',color:'var(--text0)',padding:'5px 8px',borderRadius:6,fontSize:12,width:90}}/>
+                    <input type="time" value={w.time} onChange={e=>{const ww=[...windows];ww[i]={...ww[i],time:e.target.value};setWindows(ww)}}
+                      style={{background:'var(--bg2)',border:'1px solid var(--border2)',color:'var(--text0)',padding:'5px 8px',borderRadius:6,fontSize:12,width:90}}/>
                     <button className="btn btn-ghost" onClick={()=>setWindows(ww=>ww.filter((_,j)=>j!==i))}><X/></button>
                   </div>
                 ))}
               </div>
-              <button className="btn btn-outline btn-sm" style={{width:'100%'}} onClick={()=>setWindows(w=>[...w,{day:'Saturday',time:'03:00',duration_hours:4}])}><Plus/> Add Window</button>
+              <button className="btn btn-outline btn-sm" style={{width:'100%'}} onClick={()=>setWindows(w=>[...w,{day:'Saturday',time:'03:00',duration_hours:4}])}>
+                <Plus/> Add Window
+              </button>
             </div>
           </div>
 
-          {/* Formula */}
+          {/* Connector Inputs */}
+          <div className="card">
+            <div className="card-header"><span>🔌</span><span className="card-title">Connector Inputs</span></div>
+            <div className="card-body" style={{display:'flex',flexDirection:'column',gap:14}}>
+              <div style={{fontSize:12,color:'var(--text2)',lineHeight:1.6}}>
+                Upload the three connector JSON files from <code style={{color:'var(--primary)',fontSize:11}}>test_dataset_enterprise_2026/</code> to enrich CVE matching and dependency impact analysis.
+              </div>
+
+              <div>
+                <div className="section-label">Vendor Advisories</div>
+                <FileUploadZone
+                  label="Upload vendor_advisories.json"
+                  hint={vendorAdvisories.length ? `${vendorAdvisories.length} advisories loaded` : 'test_dataset_enterprise_2026/vendor_advisories.json'}
+                  icon="📡"
+                  accept=".json"
+                  inputRef={vendorRef}
+                  onFile={handleVendorFile}
+                  status={connectorStatus.vendor}
+                  variant="secondary"
+                />
+              </div>
+
+              <div>
+                <div className="section-label">Internal Docs</div>
+                <FileUploadZone
+                  label="Upload internal_docs.json"
+                  hint={internalDocs.length ? `${internalDocs.length} docs loaded` : 'test_dataset_enterprise_2026/internal_docs.json'}
+                  icon="📁"
+                  accept=".json"
+                  inputRef={internalRef}
+                  onFile={handleInternalFile}
+                  status={connectorStatus.internal}
+                  variant="secondary"
+                />
+              </div>
+
+              <div>
+                <div className="section-label">Dependency Graph</div>
+                <FileUploadZone
+                  label="Upload dependency_graph.json"
+                  hint={dependencyGraph.length ? `${dependencyGraph.length} edges loaded — dependencies auto-synced` : 'test_dataset_enterprise_2026/dependency_graph.json'}
+                  icon="🕸️"
+                  accept=".json"
+                  inputRef={graphRef}
+                  onFile={handleGraphFile}
+                  status={connectorStatus.graph}
+                  variant="secondary"
+                />
+              </div>
+
+              {/* Loaded summary */}
+              {(vendorAdvisories.length > 0 || internalDocs.length > 0 || dependencyGraph.length > 0) && (
+                <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:4}}>
+                  {vendorAdvisories.length > 0 && <span style={{fontSize:10,fontFamily:'var(--mono)',padding:'3px 8px',borderRadius:5,background:'var(--sec-dim)',color:'#a78bfa',border:'1px solid rgba(124,58,237,.25)'}}>{vendorAdvisories.length} advisories</span>}
+                  {internalDocs.length > 0 &&     <span style={{fontSize:10,fontFamily:'var(--mono)',padding:'3px 8px',borderRadius:5,background:'var(--blue-dim)',color:'#60a5fa',border:'1px solid rgba(59,130,246,.25)'}}>{internalDocs.length} docs</span>}
+                  {dependencyGraph.length > 0 &&  <span style={{fontSize:10,fontFamily:'var(--mono)',padding:'3px 8px',borderRadius:5,background:'rgba(16,185,129,.12)',color:'#34d399',border:'1px solid rgba(16,185,129,.25)'}}>{dependencyGraph.length} edges</span>}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Scoring Formula */}
           <div style={{background:'linear-gradient(135deg,rgba(0,212,170,.05),rgba(124,58,237,.05))',border:'1px solid var(--border)',borderRadius:'var(--radius)',padding:'16px 20px'}}>
             <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--primary)',marginBottom:10}}>⚡ Scoring Formula</div>
             <div style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--text1)',lineHeight:1.9}}>
@@ -726,38 +639,40 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
               &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;× <span style={{color:'#60a5fa'}}>TierWeight</span> × <span style={{color:'var(--success)'}}>RegFlag</span>
             </div>
             <div style={{fontSize:11,color:'var(--text2)',marginTop:10,lineHeight:1.7}}>
-              PoC: ×3.0 active | ×1.0 none &nbsp;·&nbsp; Tier: Critical ×3, Important ×2<br/>
-              Regulatory: ×2.0 &nbsp;·&nbsp; Exploit: LLM (POCme engine) &nbsp;·&nbsp; Blast Radius: LLM
+              CVSS: NVD Primary only &nbsp;·&nbsp; PoC: ×3.0 active | ×1.0 none<br/>
+              Tier: Critical ×3 | Important ×2 &nbsp;·&nbsp; Regulatory: ×2.0
             </div>
           </div>
+
         </div>
       </div>
 
+      {/* API Keys Modal */}
       {showApiModal && (
         <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setShowApiModal(false)}}>
           <div className="modal-box">
             <div className="modal-title">🔑 API Keys</div>
             <div className="modal-sub">
-              <strong style={{color:'var(--warning)'}}>Verified-data mode works without keys</strong> — NVD/OSV lookups and deterministic scoring still run, but deep research, rationale, and PoC generation are richer with model keys.<br/><br/>
-              <strong style={{color:'var(--success)'}}>Gemini</strong> → POCme CVE research, exploit generation, blast radius analysis, rationale.<br/>
-              <strong style={{color:'var(--primary)'}}>Anthropic</strong> → Claude claude-opus-4-5 for evaluation &amp; rationale (preferred for structured output).<br/>
-              Both keys = full dual-model pipeline with best-of-breed results.
+              <strong style={{color:'var(--warning)'}}>Verified-data mode works without keys</strong> — NVD/OSV lookups and deterministic scoring still run, but deep research and PoC generation require model keys.<br/><br/>
+              <strong style={{color:'var(--success)'}}>Gemini</strong> — CVE research, exploit generation, rationale.<br/>
+              <strong style={{color:'var(--primary)'}}>Anthropic</strong> — Claude for evaluation &amp; structured output.
             </div>
             <div className="field" style={{marginBottom:12}}>
-              <label>Anthropic API Key (Claude claude-opus-4-5 — rationale + evaluation)</label>
+              <label>Anthropic API Key</label>
               <input type="password" value={apiKeys.anthropic} onChange={e=>setApiKeys(k=>({...k,anthropic:e.target.value}))} placeholder="sk-ant-..."/>
             </div>
             <div className="field" style={{marginBottom:20}}>
-              <label>Gemini API Key (POCme engine — deep research + exploit gen)</label>
+              <label>Gemini API Key</label>
               <input type="password" value={apiKeys.gemini} onChange={e=>setApiKeys(k=>({...k,gemini:e.target.value}))} placeholder="AIza..."/>
             </div>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
               <button className="btn btn-outline" onClick={()=>setShowApiModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={()=>setShowApiModal(false)}>Save Keys</button>
+              <button className="btn btn-primary" onClick={()=>setShowApiModal(false)}>Save</button>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }

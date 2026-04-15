@@ -81,7 +81,7 @@ function VulnerabilitiesTab({vulns, execSummary, riskReduction}) {
       </div>
       <div className="card" style={{overflow:'auto'}}>
         <table className="vuln-table">
-          <thead><tr><th>RANK</th><th>CVE ID</th><th>PACKAGE</th><th>CVSS</th><th>PoC</th><th>EXPLOIT VIABILITY</th><th>BLAST</th><th>SCORE</th><th>ASSIGNED</th><th>DUE</th><th>SRC</th><th></th></tr></thead>
+          <thead><tr><th>RANK</th><th>CVE ID</th><th>PACKAGE</th><th>CVSS</th><th>PoC</th><th>EXPLOIT VIABILITY</th><th>BLAST</th><th>SCORE</th><th>ASSIGNED</th><th>SRC</th><th></th></tr></thead>
           <tbody>
             {filtered.map((v,i)=>(
               <React.Fragment key={v.cve_id}>
@@ -95,12 +95,11 @@ function VulnerabilitiesTab({vulns, execSummary, riskReduction}) {
                   <td><span className="blast-num">×{v.blast_radius}</span></td>
                   <td><span className={`score-pill ${scoreClass(v.priority_score)}`}>{v.priority_score}</span></td>
                   <td>{v.assigned_to&&<div style={{display:'flex',alignItems:'center',gap:6}}><div className="avatar" style={{background:avatarClr(v.assigned_to)}}>{initials(v.assigned_to)}</div><span style={{fontSize:11}}>{v.assigned_to.split(' ')[0]}</span></div>}</td>
-                  <td><span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text3)'}}>{v.completion_date||'—'}</span></td>
                   <td><span className={`source-badge ${sourceBadge(v.source||'demo')}`}>{sourceLabel(v.source||'demo')}</span></td>
                   <td><Chev open={expanded===i}/></td>
                 </tr>
                 {expanded===i&&(
-                  <tr className="vuln-expand"><td colSpan={12}>
+                  <tr className="vuln-expand"><td colSpan={11}>
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
                       <div>
                         <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--primary)',marginBottom:8}}>AI Rationale</div>
@@ -116,7 +115,7 @@ function VulnerabilitiesTab({vulns, execSummary, riskReduction}) {
                         <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'#a78bfa',marginBottom:8}}>Blast Radius ({v.blast_radius})</div>
                         <div className="systems-list">{(v.affected_systems||[]).map(s=><span key={s} className="system-chip">{s}</span>)}</div>
                         <div style={{marginTop:14,display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                          {[['Complexity',`${v.complexity}/5`],['Est. Effort',`${v.estimated_hours}h`],['Tier',v.system_tier],['Regulatory',(v.regulatory||[]).join(',')||'None'],['Published',v.published||'—'],['CVSS Source',sourceDetailLabel(v.cvss_source)],['Description Source',sourceDetailLabel(v.description_source||v.provenance?.description_source)],['Viability',v.evaluation?.viability||'—'],['Confidence',v.evaluation?.confidence||'—'],['PoC Source',v.poc_source||'N/A']].map(([l,val])=>(
+                          {[['Complexity',`${v.complexity}/5`],['Tier',v.system_tier],['Regulatory',(v.regulatory||[]).join(',')||'None'],['Published',v.published||'—'],['CVSS Source',sourceDetailLabel(v.cvss_source)],['Description Source',sourceDetailLabel(v.description_source||v.provenance?.description_source)],['Viability',v.evaluation?.viability||'—'],['Confidence',v.evaluation?.confidence||'—'],['PoC Source',v.poc_source||'N/A']].map(([l,val])=>(
                             <div key={l} style={{background:'var(--bg2)',borderRadius:6,padding:'7px 10px',border:'1px solid var(--border2)'}}>
                               <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'var(--text3)',marginBottom:2}}>{l}</div>
                               <div style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:600,color:'var(--text0)'}}>{val}</div>
@@ -367,7 +366,7 @@ function CalendarTab({calendar}) {
       </div>
       <div className="card" style={{overflow:'auto'}}>
         <table className="cal-table">
-          <thead><tr><th>RANK</th><th>PATCH DATE</th><th>WINDOW</th><th>CVE / PACKAGE</th><th>PRIORITY</th><th>SCORE</th><th>EXPLOIT</th><th>VIABILITY</th><th>ASSIGNED</th><th>DUE DATE</th><th>HRS</th></tr></thead>
+          <thead><tr><th>RANK</th><th>PATCH DATE</th><th>WINDOW</th><th>CVE / PACKAGE</th><th>PRIORITY</th><th>SCORE</th><th>EXPLOIT</th><th>VIABILITY</th><th>ASSIGNED</th></tr></thead>
           <tbody>
             {safeCalendar.map(c=>(
               <tr key={c.cve_id}>
@@ -380,8 +379,6 @@ function CalendarTab({calendar}) {
                 <td>{c.exploit_language&&<span className={`lang-badge ${langClass(c.exploit_language)}`}>{c.exploit_language}</span>}</td>
                 <td>{c.viability&&<span className={`viability-badge ${vClass(c.viability)}`}>{c.viability}</span>}</td>
                 <td>{c.assigned_to&&<div style={{display:'flex',alignItems:'center',gap:6}}><div className="avatar" style={{background:avatarClr(c.assigned_to),width:18,height:18,fontSize:8}}>{initials(c.assigned_to)}</div><span style={{fontSize:11}}>{c.assigned_to}</span></div>}</td>
-                <td><span style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text1)'}}>{c.completion_date||'—'}</span></td>
-                <td><span style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text2)'}}>{c.estimated_hours}h</span></td>
               </tr>
             ))}
           </tbody>
