@@ -1,0 +1,90 @@
+Northstar Commerce Group
+Quarterly Vulnerability Assessment and Targeted Pentest Report
+Assessment Window: 2026-03-28 to 2026-04-04
+Prepared By: RedRiver Security Labs
+
+Executive Summary
+- The payment domain has multiple exploitable third-party dependency risks.
+- Two findings are assessed as high likelihood and high business impact.
+- One finding in a legacy admin endpoint is out-of-scope for current SBOM packages and should be filtered from patch ranking when package match cannot be established.
+
+Environment and Scope
+- Production-like pre-release environment mirrored from payment-api and settlement-worker.
+- Services: payment-api, auth-service, settlement-worker, merchant-portal, reporting-service.
+- Data classes observed: cardholder metadata, tokenized payment references, PII linked to merchant accounts.
+
+Findings
+
+FINDING VA-2026-041
+Title: Server-Side Request Forgery via HTTP client redirect handling
+Severity: High
+CVEs: CVE-2021-3749
+Affected Component: axios@0.21.1
+Asset: payment-api
+Exploitability: Public PoC available with low-complexity adaptation
+Business Impact: Potential access to internal metadata endpoints and lateral movement pivot
+Recommended Action: Upgrade axios to latest patched major/minor and enforce outbound allowlist
+
+FINDING VA-2026-052
+Title: JWT verification bypass risk under unsafe token handling patterns
+Severity: Critical
+CVEs: CVE-2022-23529
+Affected Component: jsonwebtoken@8.5.1
+Asset: auth-service, payment-api
+Exploitability: High confidence in realistic misuse paths; verified in test harness
+Business Impact: Potential forged tokens enabling privilege escalation and data exposure
+Recommended Action: Upgrade jsonwebtoken and enforce strict algorithm + issuer validation
+
+FINDING VA-2026-057
+Title: Prototype pollution through utility merge logic
+Severity: High
+CVEs: CVE-2021-23337
+Affected Component: lodash@4.17.20
+Asset: merchant-portal
+Exploitability: Medium; requires crafted nested payload and vulnerable merge pathway
+Business Impact: Possible authorization bypass in edge request handlers
+Recommended Action: Upgrade lodash and add payload schema guards
+
+FINDING VA-2026-061
+Title: WebSocket DoS with crafted frame sequences
+Severity: Medium
+CVEs: CVE-2021-32640
+Affected Component: ws@7.4.6
+Asset: notification-gateway
+Exploitability: Medium with authenticated channel access
+Business Impact: Notification degradation, delayed settlement alerts
+Recommended Action: Upgrade ws and enforce frame throttling
+
+FINDING VA-2026-074
+Title: Argument parsing injection in maintenance utility
+Severity: Medium
+CVEs: CVE-2021-44906
+Affected Component: minimist@1.2.5
+Asset: settlement-worker
+Exploitability: Medium in automation context
+Business Impact: Workflow disruption and potentially unsafe script execution in batch jobs
+Recommended Action: Upgrade minimist and sanitize command invocations
+
+FINDING VA-2026-089
+Title: Archive extraction path traversal risk
+Severity: High
+CVEs: CVE-2021-32803
+Affected Component: tar@4.4.13
+Asset: ingestion-worker
+Exploitability: High in file-import path without strict validation
+Business Impact: Write outside intended extraction directory, possible code overwrite
+Recommended Action: Upgrade tar and enforce extraction jail path checks
+
+FINDING VA-2026-101
+Title: Legacy admin template injection (non-SBOM asset)
+Severity: High
+CVEs: CVE-2019-10744
+Affected Component: npm package not present in current payment-api SBOM
+Asset: legacy-admin-console
+Exploitability: Not retested in this cycle
+Business Impact: Legacy risk only
+Recommended Action: Validate package inventory and isolate legacy console path
+
+Analyst Notes
+- VA-2026-101 should remain visible in report history but may be omitted from immediate package-based remediation ranking if no package match exists.
+- Exploit validation scripts were run in isolated sandbox under written authorization.

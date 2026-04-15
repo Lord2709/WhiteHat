@@ -1,0 +1,32 @@
+[
+  {
+    "advisory_id": "ADV-NS-2026-041",
+    "title": "Urgent Axios SSRF mitigation guidance",
+    "severity": "high",
+    "cve_ids": ["CVE-2021-3749"],
+    "affected_packages": ["axios"],
+    "summary": "Known SSRF vectors in legacy redirect handling. Upgrade immediately and restrict outbound HTTP destinations.",
+    "url": "https://security.vendor.example/advisories/ADV-NS-2026-041",
+    "published": "2026-03-30"
+  },
+  {
+    "advisory_id": "ADV-NS-2026-052",
+    "title": "jsonwebtoken unsafe default pattern alert",
+    "severity": "critical",
+    "cve_ids": ["CVE-2022-23529"],
+    "affected_packages": ["jsonwebtoken"],
+    "summary": "Potential verification bypass in vulnerable integration patterns. Enforce strict verification options.",
+    "url": "https://security.vendor.example/advisories/ADV-NS-2026-052",
+    "published": "2026-04-01"
+  },
+  {
+    "advisory_id": "ADV-NS-2026-074",
+    "title": "minimist command parsing hardening",
+    "severity": "medium",
+    "cve_ids": ["CVE-2021-44906"],
+    "affected_packages": ["minimist"],
+    "summary": "Upgrade minimist to patched version and validate all dynamic command arguments.",
+    "url": "https://security.vendor.example/advisories/ADV-NS-2026-074",
+    "published": "2026-04-03"
+  }
+]

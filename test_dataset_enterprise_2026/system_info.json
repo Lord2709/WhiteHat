@@ -1,0 +1,15 @@
+{
+  "name": "payment-api",
+  "tier": "critical",
+  "owner": "platform-security",
+  "regulatory": ["PCI", "GDPR", "SOX"],
+  "dependencies": [
+    "auth-service",
+    "settlement-worker",
+    "fraud-scoring",
+    "merchant-portal",
+    "reporting-service",
+    "redis-cluster",
+    "postgres-primary"
+  ]
+}

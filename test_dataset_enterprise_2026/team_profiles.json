@@ -1,0 +1,77 @@
+[
+  {
+    "name": "Ariana Patel",
+    "email": "ariana.patel@northstar.example",
+    "role": "Staff Application Security Engineer",
+    "linkedin_url": "https://www.linkedin.com/in/ariana-patel-security",
+    "professional_summary": "Leads dependency and SDLC security controls for customer-facing payment systems.",
+    "expertise": ["security", "nodejs", "threat-modeling", "jwt"],
+    "availability_notes": "Primary reviewer for critical auth changes.",
+    "current_load": 1,
+    "schedule": {
+      "available_hours_per_week": 36,
+      "sprint_hours_remaining": 20,
+      "work_days": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    }
+  },
+  {
+    "name": "Devon Kim",
+    "email": "devon.kim@northstar.example",
+    "role": "Senior Backend Engineer",
+    "linkedin_url": "https://www.linkedin.com/in/devon-kim-backend",
+    "professional_summary": "Owns payment-api and settlement-worker reliability and dependency lifecycle.",
+    "expertise": ["nodejs", "express", "postgres", "redis"],
+    "availability_notes": "On-call backup Wednesday night.",
+    "current_load": 2,
+    "schedule": {
+      "available_hours_per_week": 40,
+      "sprint_hours_remaining": 18,
+      "work_days": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    }
+  },
+  {
+    "name": "Mina Ortega",
+    "email": "mina.ortega@northstar.example",
+    "role": "SRE Engineer",
+    "linkedin_url": "https://www.linkedin.com/in/mina-ortega-sre",
+    "professional_summary": "Maintains platform hardening baselines and deployment safeguards.",
+    "expertise": ["devops", "kubernetes", "monitoring", "incident-response"],
+    "availability_notes": "Handles maintenance window execution on Sundays.",
+    "current_load": 1,
+    "schedule": {
+      "available_hours_per_week": 34,
+      "sprint_hours_remaining": 16,
+      "work_days": ["monday", "tuesday", "thursday", "friday", "sunday"]
+    }
+  },
+  {
+    "name": "Ravi Sharma",
+    "email": "ravi.sharma@northstar.example",
+    "role": "Principal Engineer, AuthN/AuthZ",
+    "linkedin_url": "https://www.linkedin.com/in/ravi-sharma-auth",
+    "professional_summary": "Design authority for token flows, trust boundaries, and auth hardening.",
+    "expertise": ["security", "nodejs", "jwt", "oauth"],
+    "availability_notes": "Reserve for critical token-related CVEs.",
+    "current_load": 0,
+    "schedule": {
+      "available_hours_per_week": 32,
+      "sprint_hours_remaining": 22,
+      "work_days": ["monday", "tuesday", "wednesday", "thursday"]
+    }
+  },
+  {
+    "name": "Elena Brooks",
+    "email": "elena.brooks@northstar.example",
+    "role": "Senior Platform Engineer",
+    "linkedin_url": "https://www.linkedin.com/in/elena-brooks-platform",
+    "professional_summary": "Owns internal package governance and CI gatekeeping policy.",
+    "expertise": ["python", "devops", "ci-cd", "security"],
+    "availability_notes": "Available for high-complexity patch verification workflows.",
+    "current_load": 1,
+    "schedule": {
+      "available_hours_per_week": 38,
+      "sprint_hours_remaining": 19,
+      "work_days": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    }
+  }
+]

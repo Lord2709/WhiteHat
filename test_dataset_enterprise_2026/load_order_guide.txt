@@ -1,0 +1,14 @@
+Recommended loading order in UI:
+
+1) Upload package.json
+2) Upload va_report_q2_2026.txt
+3) Paste system_info.json values
+4) Paste maintenance_windows.json values
+5) Import/create team profiles from team_profiles.json
+6) Paste connector JSON files:
+   - vendor_advisories.json
+   - internal_docs.json
+   - dependency_graph.json
+7) Select exploit language
+8) Run analysis
+9) Validate using expected_checks.md

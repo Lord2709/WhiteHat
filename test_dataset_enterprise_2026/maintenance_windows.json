@@ -1,0 +1,12 @@
+[
+  {
+    "day": "Sunday",
+    "time": "01:30",
+    "duration_hours": 4
+  },
+  {
+    "day": "Wednesday",
+    "time": "23:00",
+    "duration_hours": 2
+  }
+]

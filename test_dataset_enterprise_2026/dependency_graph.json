@@ -1,0 +1,13 @@
+[
+  {"source": "axios", "target": "payment-api", "relation": "depends_on"},
+  {"source": "jsonwebtoken", "target": "auth-service", "relation": "depends_on"},
+  {"source": "auth-service", "target": "payment-api", "relation": "authn_for"},
+  {"source": "payment-api", "target": "settlement-worker", "relation": "publishes_to"},
+  {"source": "payment-api", "target": "fraud-scoring", "relation": "calls"},
+  {"source": "payment-api", "target": "merchant-portal", "relation": "serves"},
+  {"source": "settlement-worker", "target": "reporting-service", "relation": "feeds"},
+  {"source": "tar", "target": "ingestion-worker", "relation": "depends_on"},
+  {"source": "minimist", "target": "settlement-worker", "relation": "depends_on"},
+  {"source": "ws", "target": "notification-gateway", "relation": "depends_on"},
+  {"source": "notification-gateway", "target": "merchant-portal", "relation": "notifies"}
+]

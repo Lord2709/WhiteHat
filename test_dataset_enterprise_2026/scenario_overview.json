@@ -1,0 +1,23 @@
+{
+  "scenario_id": "wh-enterprise-payments-q2-2026",
+  "name": "Checkout and Settlement Platform",
+  "organization": "Northstar Commerce Group",
+  "environment": "production",
+  "generated": "2026-04-15",
+  "data_type": "synthetic-realistic",
+  "business_context": {
+    "critical_user_flow": "checkout -> payment authorization -> settlement -> notification",
+    "peak_tps": 1200,
+    "monthly_transactions": 4800000,
+    "blast_radius_comment": "Failure affects checkout availability, settlement backlog, and merchant reconciliation windows."
+  },
+  "regulatory_scope": ["PCI", "GDPR", "SOX"],
+  "primary_assets": [
+    "payment-api",
+    "auth-service",
+    "settlement-worker",
+    "fraud-scoring",
+    "merchant-portal",
+    "reporting-service"
+  ]
+}

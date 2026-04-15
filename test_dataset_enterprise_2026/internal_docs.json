@@ -1,0 +1,26 @@
+[
+  {
+    "doc_id": "DOC-ARCH-014",
+    "title": "Payment API trust boundary notes",
+    "systems": ["payment-api", "auth-service", "merchant-portal"],
+    "tags": ["pci", "jwt", "authz", "critical-path"],
+    "criticality": "high",
+    "content": "JWT verification occurs in auth-service and fallback checks exist in payment-api middleware. jsonwebtoken upgrade must be coordinated with token validation integration tests."
+  },
+  {
+    "doc_id": "DOC-OPS-031",
+    "title": "Settlement worker import runbook",
+    "systems": ["settlement-worker", "ingestion-worker"],
+    "tags": ["batch", "tar", "file-import", "operations"],
+    "criticality": "medium",
+    "content": "Archive extraction and batch import logic rely on tar and minimist arguments. Validate extraction jail path and command argument sanitation before release."
+  },
+  {
+    "doc_id": "DOC-RES-022",
+    "title": "Websocket incident postmortem summary",
+    "systems": ["notification-gateway", "reporting-service"],
+    "tags": ["ws", "dos", "availability"],
+    "criticality": "medium",
+    "content": "Prior instability incident linked to websocket frame flood patterns under high event volume. ws upgrades should include load test and frame-throttle validation."
+  }
+]
