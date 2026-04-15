@@ -51,6 +51,12 @@ def _db_connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_table_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def _db_init() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     with _db_connect() as conn:
@@ -104,6 +110,9 @@ def _db_init() -> None:
             )
             """
         )
+        _ensure_table_column(conn, "analysis_config", "vendor_advisories_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_table_column(conn, "analysis_config", "internal_docs_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_table_column(conn, "analysis_config", "dependency_graph_json", "TEXT NOT NULL DEFAULT '[]'")
         conn.commit()
 
 app = FastAPI(title="VulnPriority AI", version="3.0.0")
@@ -146,12 +155,41 @@ class MaintenanceWindow(BaseModel):
     time: str = "02:00"
     duration_hours: int = 4
 
+
+class VendorAdvisory(BaseModel):
+    advisory_id: str = ""
+    title: str = ""
+    severity: str = "medium"
+    cve_ids: List[str] = []
+    affected_packages: List[str] = []
+    summary: str = ""
+    url: str = ""
+    published: str = ""
+
+
+class InternalDoc(BaseModel):
+    doc_id: str = ""
+    title: str = ""
+    systems: List[str] = []
+    tags: List[str] = []
+    criticality: str = ""
+    content: str = ""
+
+
+class DependencyEdge(BaseModel):
+    source: str
+    target: str
+    relation: str = "depends_on"
+
 class AnalyzeRequest(BaseModel):
     packages: Dict[str, str] = {}
     va_cve_ids: List[str] = []
     system_info: SystemInfo
     maintenance_windows: List[MaintenanceWindow] = []
     team_members: List[TeamMember] = []
+    vendor_advisories: List[VendorAdvisory] = []
+    internal_docs: List[InternalDoc] = []
+    dependency_graph: List[DependencyEdge] = []
     exploit_language: str = "python"
     anthropic_api_key: Optional[str] = None
     gemini_api_key: Optional[str] = None
@@ -191,6 +229,9 @@ class AnalysisConfigPayload(BaseModel):
     system_info: Optional[SystemInfo] = None
     maintenance_windows: List[MaintenanceWindow] = []
     team_members: List[TeamMember] = []
+    vendor_advisories: List[VendorAdvisory] = []
+    internal_docs: List[InternalDoc] = []
+    dependency_graph: List[DependencyEdge] = []
     exploit_language: str = "python"
     api_keys: Dict[str, str] = {}
     nl_text: str = ""
@@ -237,6 +278,93 @@ def _scan_row_to_meta(row: sqlite3.Row) -> Dict[str, Any]:
         "counts": _json_loads_safe(row["counts_json"], {}),
         "created_at": row["created_at"],
     }
+
+
+def _norm_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9._\-/@]+", "", (value or "").strip().lower())
+
+
+def _package_base_name(package_value: str) -> str:
+    raw = (package_value or "").strip().lower()
+    if "@" in raw and not raw.startswith("@"):
+        return raw.split("@", 1)[0]
+    return raw
+
+
+def _dependency_reach(start: str, edges: List[Dict[str, Any]], max_nodes: int = 25) -> List[str]:
+    index: Dict[str, Set[str]] = {}
+    for e in edges:
+        src = _norm_token(str(e.get("source", "")))
+        tgt = _norm_token(str(e.get("target", "")))
+        if not src or not tgt:
+            continue
+        index.setdefault(src, set()).add(tgt)
+    seen: Set[str] = set()
+    queue: List[str] = [_norm_token(start)]
+    while queue and len(seen) < max_nodes:
+        cur = queue.pop(0)
+        for nxt in sorted(index.get(cur, set())):
+            if nxt in seen:
+                continue
+            seen.add(nxt)
+            queue.append(nxt)
+            if len(seen) >= max_nodes:
+                break
+    return list(seen)
+
+
+def apply_connector_signals(
+    vuln: Dict[str, Any],
+    advisories: List[VendorAdvisory],
+    internal_docs: List[InternalDoc],
+    dependency_graph: List[DependencyEdge],
+) -> Dict[str, Any]:
+    cve_id = _norm_token(str(vuln.get("cve_id", "")))
+    pkg = _package_base_name(str(vuln.get("package", "")))
+
+    advisory_hits: List[str] = []
+    for adv in advisories:
+        cves = {_norm_token(c) for c in (adv.cve_ids or [])}
+        adv_pkgs = {_package_base_name(p) for p in (adv.affected_packages or [])}
+        text_blob = " ".join([adv.title or "", adv.summary or "", adv.advisory_id or ""]).lower()
+        if cve_id and cve_id in cves:
+            advisory_hits.append(adv.advisory_id or adv.title or "vendor-advisory")
+        elif pkg and (pkg in adv_pkgs or pkg in text_blob):
+            advisory_hits.append(adv.advisory_id or adv.title or "vendor-advisory")
+
+    doc_hits: List[str] = []
+    doc_systems: Set[str] = set()
+    for doc in internal_docs:
+        blob = " ".join([
+            doc.title or "",
+            doc.content or "",
+            " ".join(doc.tags or []),
+            " ".join(doc.systems or []),
+        ]).lower()
+        if (cve_id and cve_id in blob) or (pkg and pkg in blob):
+            doc_hits.append(doc.doc_id or doc.title or "internal-doc")
+            for s in (doc.systems or []):
+                if s:
+                    doc_systems.add(str(s))
+
+    dep_reach = _dependency_reach(pkg, [e.model_dump() for e in dependency_graph]) if pkg else []
+
+    connector_signals = {
+        "vendor_advisory_hits": len(advisory_hits),
+        "internal_doc_hits": len(doc_hits),
+        "dependency_reach": len(dep_reach),
+        "matched_advisories": advisory_hits[:5],
+        "matched_docs": doc_hits[:5],
+        "dependency_downstream": dep_reach[:8],
+    }
+
+    affected = list(vuln.get("affected_systems", []) or [])
+    for item in list(doc_systems) + dep_reach:
+        if item not in affected:
+            affected.append(item)
+    vuln["affected_systems"] = affected[:10]
+    vuln["connector_signals"] = connector_signals
+    return connector_signals
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM HELPER LAYER
@@ -2453,8 +2581,9 @@ async def save_config(payload: AnalysisConfigPayload):
             """
             INSERT OR REPLACE INTO analysis_config 
             (id, packages_json, va_cve_ids_json, system_info_json, maintenance_windows_json, 
-             team_members_json, exploit_language, api_keys_json, nl_text, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             team_members_json, vendor_advisories_json, internal_docs_json, dependency_graph_json,
+             exploit_language, api_keys_json, nl_text, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 cfg_id,
@@ -2463,6 +2592,9 @@ async def save_config(payload: AnalysisConfigPayload):
                 json.dumps(payload.system_info.model_dump()) if payload.system_info else json.dumps({}),
                 json.dumps([w.model_dump() for w in (payload.maintenance_windows or [])]),
                 json.dumps([m.model_dump() for m in (payload.team_members or [])]),
+                json.dumps([a.model_dump() for a in (payload.vendor_advisories or [])]),
+                json.dumps([d.model_dump() for d in (payload.internal_docs or [])]),
+                json.dumps([e.model_dump() for e in (payload.dependency_graph or [])]),
                 payload.exploit_language,
                 json.dumps(payload.api_keys),
                 payload.nl_text,
@@ -2489,6 +2621,9 @@ async def load_config():
             "system_info": None,
             "maintenance_windows": [],
             "team_members": [],
+            "vendor_advisories": [],
+            "internal_docs": [],
+            "dependency_graph": [],
             "exploit_language": "python",
             "api_keys": {},
             "nl_text": "",
@@ -2499,6 +2634,9 @@ async def load_config():
         "system_info": _json_loads_safe(row["system_info_json"], None),
         "maintenance_windows": _json_loads_safe(row["maintenance_windows_json"], []),
         "team_members": _json_loads_safe(row["team_members_json"], []),
+        "vendor_advisories": _json_loads_safe(row["vendor_advisories_json"], []),
+        "internal_docs": _json_loads_safe(row["internal_docs_json"], []),
+        "dependency_graph": _json_loads_safe(row["dependency_graph_json"], []),
         "exploit_language": row["exploit_language"],
         "api_keys": _json_loads_safe(row["api_keys_json"], {}),
         "nl_text": row["nl_text"],
@@ -2675,6 +2813,39 @@ async def analyze(request: AnalyzeRequest):
                       f"{len(all_vulns)} CVEs discovered via {src}", count=len(all_vulns))
             await asyncio.sleep(0.2)
 
+            # ── 2.5 Connector Ingestion (vendor advisories + internal docs + dependency graph)
+            advisory_count = len(request.vendor_advisories or [])
+            doc_count = len(request.internal_docs or [])
+            edge_count = len(request.dependency_graph or [])
+            yield evt(
+                "connector_ingest",
+                "running",
+                f"Applying connector context: {advisory_count} advisories, {doc_count} internal docs, {edge_count} dependency edges…",
+            )
+            total_adv_hits = 0
+            total_doc_hits = 0
+            max_dep_reach = 0
+            for i, v in enumerate(all_vulns):
+                sig = apply_connector_signals(
+                    v,
+                    request.vendor_advisories or [],
+                    request.internal_docs or [],
+                    request.dependency_graph or [],
+                )
+                total_adv_hits += int(sig.get("vendor_advisory_hits", 0))
+                total_doc_hits += int(sig.get("internal_doc_hits", 0))
+                max_dep_reach = max(max_dep_reach, int(sig.get("dependency_reach", 0)))
+                all_vulns[i] = v
+            yield evt(
+                "connector_ingest",
+                "done",
+                f"Connector enrichment complete: {total_adv_hits} advisory matches, {total_doc_hits} doc matches, max dependency reach {max_dep_reach}.",
+                advisory_hits=total_adv_hits,
+                doc_hits=total_doc_hits,
+                max_dependency_reach=max_dep_reach,
+            )
+            await asyncio.sleep(0.1)
+
             # ── 3. Deep CVE Research  (POCme logic)
             yield evt("deep_research", "running",
                       f"NVD history fetch + LLM 'Deep Intelligence Gathering' for {len(all_vulns)} CVEs…")
@@ -2724,6 +2895,9 @@ async def analyze(request: AnalyzeRequest):
                           cve=v["cve_id"])
                 impact = calc_impact(v, request.system_info)
                 all_vulns[i].update(impact)
+                dep_reach = int((all_vulns[i].get("connector_signals") or {}).get("dependency_reach", 0))
+                if dep_reach > 0:
+                    all_vulns[i]["blast_radius"] = min(10, max(int(all_vulns[i].get("blast_radius", 1)), dep_reach + 1))
                 all_vulns[i]["regulatory"]  = request.system_info.regulatory
                 all_vulns[i]["system_tier"] = request.system_info.tier
                 await asyncio.sleep(0.1)
@@ -2832,6 +3006,8 @@ async def analyze(request: AnalyzeRequest):
                 "risk_reduction":    ai_r,
                 "total_effort_hrs":  sum(v.get("estimated_hours", 2) for v in all_vulns[:10]),
                 "max_blast_radius":  max_blast,
+                "connector_advisory_hits": sum(int((v.get("connector_signals") or {}).get("vendor_advisory_hits", 0)) for v in all_vulns),
+                "connector_doc_hits": sum(int((v.get("connector_signals") or {}).get("internal_doc_hits", 0)) for v in all_vulns),
             }
 
             final_payload = json.dumps({

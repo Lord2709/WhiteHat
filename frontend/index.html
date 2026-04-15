@@ -446,11 +446,131 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
   const [newMember, setNewMember] = useState({name:'',email:'',expertiseStr:'',sprintHours:20});
   const [apiKeys,  setApiKeys]   = useState({anthropic:'',gemini:''});
   const [nlText, setNlText] = useState('');
+  const [vendorAdvisoriesText, setVendorAdvisoriesText] = useState('[]');
+  const [vendorLinesText, setVendorLinesText] = useState('');
+  const [internalDocsText, setInternalDocsText] = useState('[]');
+  const [internalLinesText, setInternalLinesText] = useState('');
+  const [dependencyGraphText, setDependencyGraphText] = useState('[]');
+  const [graphLinesText, setGraphLinesText] = useState('');
+  const [connectorMsg, setConnectorMsg] = useState('');
   const [nlBusy, setNlBusy] = useState(false);
   const [nlMsg, setNlMsg] = useState('');
   const [teamSyncNote, setTeamSyncNote] = useState('');
   const [envKeys,  setEnvKeys]   = useState({gemini:false,anthropic:false,nvd:false});
   const [showApiModal, setShowApiModal] = useState(false);
+
+  const normalizeSystemInfo = raw => ({
+    name: raw?.name || 'payment-gateway',
+    tier: raw?.tier || 'critical',
+    regulatory: Array.isArray(raw?.regulatory) ? raw.regulatory : [],
+    owner: raw?.owner || 'security-team',
+    dependencies: Array.isArray(raw?.dependencies) ? raw.dependencies : [],
+  });
+
+  const normalizeTeamMember = m => ({
+    name: m?.name || 'Engineer',
+    email: m?.email || '',
+    role: m?.role || '',
+    linkedin_url: m?.linkedin_url || '',
+    professional_summary: m?.professional_summary || '',
+    expertise: Array.isArray(m?.expertise) ? m.expertise : [],
+    availability_notes: m?.availability_notes || '',
+    current_load: m?.current_load || 0,
+    schedule: {
+      available_hours_per_week: m?.schedule?.available_hours_per_week || 40,
+      sprint_hours_remaining: m?.schedule?.sprint_hours_remaining || 20,
+      work_days: Array.isArray(m?.schedule?.work_days) ? m.schedule.work_days : ['monday','tuesday','wednesday','thursday','friday'],
+    },
+  });
+
+  const edgesToLines = edges => {
+    if (!Array.isArray(edges)) return '';
+    return edges
+      .map(e => `${e?.source || ''} -> ${e?.target || ''}`)
+      .filter(line => !line.startsWith(' ->'))
+      .join('\n');
+  };
+
+  const parseGraphLines = raw => {
+    const lines = (raw || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const out = [];
+    for (const line of lines) {
+      const chain = line.split(/\s*->\s*/).map(s => s.trim()).filter(Boolean);
+      if (chain.length < 2) continue;
+      for (let i = 0; i < chain.length - 1; i += 1) {
+        out.push({source: chain[i], target: chain[i + 1], relation: 'depends_on'});
+      }
+    }
+    const uniq = [];
+    const seen = new Set();
+    for (const e of out) {
+      const k = `${(e.source || '').toLowerCase()}|${(e.target || '').toLowerCase()}|${(e.relation || '').toLowerCase()}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push(e);
+    }
+    return uniq;
+  };
+
+  const advisoriesToLines = advisories => {
+    if (!Array.isArray(advisories)) return '';
+    return advisories.map(a => [
+      a?.advisory_id || '',
+      a?.severity || 'medium',
+      Array.isArray(a?.cve_ids) ? a.cve_ids.join(',') : '',
+      Array.isArray(a?.affected_packages) ? a.affected_packages.join(',') : '',
+      a?.title || '',
+    ].join(' | ')).join('\n');
+  };
+
+  const parseAdvisoryLines = raw => {
+    const lines = (raw || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const advisories = [];
+    for (const line of lines) {
+      const [advisoryId, severity, cvesRaw, pkgsRaw, title] = line.split('|').map(s => s.trim());
+      advisories.push({
+        advisory_id: advisoryId || `ADV-${advisories.length + 1}`,
+        title: title || advisoryId || 'Vendor advisory',
+        severity: (severity || 'medium').toLowerCase(),
+        cve_ids: (cvesRaw || '').split(',').map(s => s.trim()).filter(Boolean),
+        affected_packages: (pkgsRaw || '').split(',').map(s => s.trim()).filter(Boolean),
+        summary: '',
+        url: '',
+        published: '',
+      });
+    }
+    return advisories;
+  };
+
+  const docsToLines = docs => {
+    if (!Array.isArray(docs)) return '';
+    return docs.map(d => [
+      d?.doc_id || '',
+      d?.title || '',
+      Array.isArray(d?.systems) ? d.systems.join(',') : '',
+      Array.isArray(d?.tags) ? d.tags.join(',') : '',
+      d?.content || '',
+    ].join(' | ')).join('\n');
+  };
+
+  const parseDocLines = raw => {
+    const lines = (raw || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const docs = [];
+    for (const line of lines) {
+      const [docId, title, systemsRaw, tagsRaw, content] = line.split('|').map(s => s.trim());
+      docs.push({
+        doc_id: docId || `DOC-${docs.length + 1}`,
+        title: title || docId || 'Internal note',
+        systems: (systemsRaw || '').split(',').map(s => s.trim()).filter(Boolean),
+        tags: (tagsRaw || '').split(',').map(s => s.trim()).filter(Boolean),
+        criticality: '',
+        content: content || '',
+      });
+    }
+    return docs;
+  };
+
+  const regulatoryList = Array.isArray(sysInfo?.regulatory) ? sysInfo.regulatory : [];
   useEffect(()=>{
     fetch(`${API_URL}/api/env-status`).then(r=>r.json()).then(d=>{
       setEnvKeys({gemini:!!d.gemini_key_loaded, anthropic:!!d.anthropic_key_loaded, nvd:!!d.nvd_key_loaded});
@@ -460,23 +580,25 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
       if (cfg) {
         if (cfg.packages && Object.keys(cfg.packages).length > 0) setPackages(cfg.packages);
         if (cfg.va_cve_ids && cfg.va_cve_ids.length > 0) setVaCves(cfg.va_cve_ids);
-        if (cfg.system_info) setSysInfo(cfg.system_info);
+        if (cfg.system_info) setSysInfo(normalizeSystemInfo(cfg.system_info));
         if (cfg.maintenance_windows && cfg.maintenance_windows.length > 0) setWindows(cfg.maintenance_windows);
         if (cfg.team_members && cfg.team_members.length > 0) {
-          setTeam(cfg.team_members.map(m=>({
-            name: m.name||'Engineer',
-            email: m.email||'',
-            role: m.role||'',
-            linkedin_url: m.linkedin_url||'',
-            professional_summary: m.professional_summary||'',
-            expertise: m.expertise||[],
-            availability_notes: m.availability_notes||'',
-            current_load: m.current_load||0,
-            schedule: m.schedule||{available_hours_per_week:40,sprint_hours_remaining:20,work_days:['monday','tuesday','wednesday','thursday','friday']}
-          })));
+          setTeam(cfg.team_members.map(normalizeTeamMember));
         }
         if (cfg.api_keys) setApiKeys(cfg.api_keys);
         if (cfg.nl_text) setNlText(cfg.nl_text);
+        if (Array.isArray(cfg.vendor_advisories)) {
+          setVendorAdvisoriesText(JSON.stringify(cfg.vendor_advisories, null, 2));
+          setVendorLinesText(advisoriesToLines(cfg.vendor_advisories));
+        }
+        if (Array.isArray(cfg.internal_docs)) {
+          setInternalDocsText(JSON.stringify(cfg.internal_docs, null, 2));
+          setInternalLinesText(docsToLines(cfg.internal_docs));
+        }
+        if (Array.isArray(cfg.dependency_graph)) {
+          setDependencyGraphText(JSON.stringify(cfg.dependency_graph, null, 2));
+          setGraphLinesText(edgesToLines(cfg.dependency_graph));
+        }
       }
     }).catch(()=>{});
     // Auto-load team profiles from DB on mount
@@ -547,8 +669,8 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
   };
 
   const applySampleSystem = data => {
-    if (data.system_info) setSysInfo(data.system_info);
-    if (Array.isArray(data.team_members) && data.team_members.length) setTeam(data.team_members);
+    if (data.system_info) setSysInfo(normalizeSystemInfo(data.system_info));
+    if (Array.isArray(data.team_members) && data.team_members.length) setTeam(data.team_members.map(normalizeTeamMember));
     if (Array.isArray(data.maintenance_windows) && data.maintenance_windows.length) setWindows(data.maintenance_windows);
   };
 
@@ -578,7 +700,10 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
     }
   };
 
-  const toggleReg = r => setSysInfo(s=>({...s,regulatory:s.regulatory.includes(r)?s.regulatory.filter(x=>x!==r):[...s.regulatory,r]}));
+  const toggleReg = r => setSysInfo(s=>{
+    const regs = Array.isArray(s.regulatory) ? s.regulatory : [];
+    return {...s,regulatory:regs.includes(r)?regs.filter(x=>x!==r):[...regs,r]};
+  });
 
   const addMember = () => {
     const {name,email,expertiseStr,sprintHours} = newMember;
@@ -606,6 +731,53 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
     }
   };
 
+  const parseConnectorJson = (raw, label) => {
+    const txt = (raw || '').trim();
+    if (!txt) return [];
+    let parsed = null;
+    try {
+      parsed = JSON.parse(txt);
+    } catch {
+      throw new Error(`${label} must be valid JSON array`);
+    }
+    if (!Array.isArray(parsed)) throw new Error(`${label} must be a JSON array`);
+    return parsed;
+  };
+
+  const parseConnectorJsonNoThrow = raw => {
+    try {
+      const parsed = JSON.parse((raw || '').trim() || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const buildGraphFromLines = () => {
+    const edges = parseGraphLines(graphLinesText);
+    setDependencyGraphText(JSON.stringify(edges, null, 2));
+    setConnectorMsg(edges.length ? `Built ${edges.length} dependency edge(s) from simple input.` : 'No valid graph lines found. Use format: source -> target');
+  };
+
+  const buildAdvisoriesFromLines = () => {
+    const advisories = parseAdvisoryLines(vendorLinesText);
+    setVendorAdvisoriesText(JSON.stringify(advisories, null, 2));
+    setConnectorMsg(advisories.length ? `Built ${advisories.length} vendor advisory record(s) from simple input.` : 'No valid advisory lines found.');
+  };
+
+  const buildDocsFromLines = () => {
+    const docs = parseDocLines(internalLinesText);
+    setInternalDocsText(JSON.stringify(docs, null, 2));
+    setConnectorMsg(docs.length ? `Built ${docs.length} internal doc record(s) from simple input.` : 'No valid internal-doc lines found.');
+  };
+
+  const syncDependenciesFromGraph = () => {
+    const edges = parseConnectorJsonNoThrow(dependencyGraphText);
+    const deps = Array.from(new Set(edges.map(e => (e?.target || '').trim()).filter(Boolean)));
+    setSysInfo(s => ({...s, dependencies: deps}));
+    setConnectorMsg(deps.length ? `Synced ${deps.length} downstream dependencies from graph.` : 'No dependency targets found to sync.');
+  };
+
   useEffect(() => {
     // Auto-save config to DB (debounced: only save changes, not on every keystroke)
     const saveTimer = setTimeout(() => {
@@ -618,6 +790,9 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
           system_info: sysInfo,
           maintenance_windows: windows,
           team_members: team,
+          vendor_advisories: parseConnectorJsonNoThrow(vendorAdvisoriesText),
+          internal_docs: parseConnectorJsonNoThrow(internalDocsText),
+          dependency_graph: parseConnectorJsonNoThrow(dependencyGraphText),
           exploit_language: exploitLang,
           api_keys: apiKeys,
           nl_text: nlText,
@@ -625,14 +800,27 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
       }).catch(()=>{});
     }, 1000);
     return () => clearTimeout(saveTimer);
-  }, [packages, vaCves, sysInfo, windows, team, exploitLang, apiKeys, nlText]);
+  }, [packages, vaCves, sysInfo, windows, team, exploitLang, apiKeys, nlText, vendorAdvisoriesText, internalDocsText, dependencyGraphText]);
 
   const hasApiKey = !!(apiKeys.anthropic || apiKeys.gemini || envKeys.gemini || envKeys.anthropic);
   const canRun = Object.keys(packages).length > 0 || vaCves.length > 0;
 
   const handleRun = () => {
+    let vendorAdvisories = [];
+    let internalDocs = [];
+    let dependencyGraph = [];
+    try {
+      vendorAdvisories = parseConnectorJson(vendorAdvisoriesText, 'Vendor advisories');
+      internalDocs = parseConnectorJson(internalDocsText, 'Internal docs');
+      dependencyGraph = parseConnectorJson(dependencyGraphText, 'Dependency graph');
+      setConnectorMsg('');
+    } catch (err) {
+      setConnectorMsg(err.message);
+      return;
+    }
     onRun({packages, va_cve_ids:vaCves, system_info:sysInfo, maintenance_windows:windows,
-           team_members:team, exploit_language:exploitLang,
+           team_members:team, vendor_advisories:vendorAdvisories, internal_docs:internalDocs, dependency_graph:dependencyGraph,
+           exploit_language:exploitLang,
            anthropic_api_key:apiKeys.anthropic||null, gemini_api_key:apiKeys.gemini||null});
   };
 
@@ -657,7 +845,7 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
-      if (data.system_info) setSysInfo(data.system_info);
+      if (data.system_info) setSysInfo(normalizeSystemInfo(data.system_info));
       if (Array.isArray(data.maintenance_windows) && data.maintenance_windows.length) setWindows(data.maintenance_windows);
       setNlMsg(data.assistant_message || 'Configuration updated from natural-language input.');
     } catch (err) {
@@ -705,6 +893,69 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
             <button className="btn btn-outline btn-sm" onClick={()=>setNlText('')}>Clear</button>
           </div>
           {nlMsg&&<div style={{fontSize:12,color:'var(--text2)'}}>{nlMsg}</div>}
+        </div>
+      </div>
+
+      <div className="card" style={{marginBottom:18}}>
+        <div className="card-header"><span>🔌</span><span className="card-title">Connector Inputs (Phase 2)</span></div>
+        <div className="card-body" style={{display:'grid',gap:10}}>
+          <div className="section-label">Vendor advisories JSON array</div>
+          <textarea
+            value={vendorAdvisoriesText}
+            onChange={e=>setVendorAdvisoriesText(e.target.value)}
+            placeholder='[{"advisory_id":"ADV-2026-001","cve_ids":["CVE-2026-1234"],"affected_packages":["axios"],"severity":"high","title":"Vendor patch note"}]'
+            style={{minHeight:90,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
+          />
+          <div className="section-label">Simple advisories input (advisory_id | severity | cves | packages | title)</div>
+          <textarea
+            value={vendorLinesText}
+            onChange={e=>setVendorLinesText(e.target.value)}
+            placeholder={'ADV-2026-001 | high | CVE-2026-1234,CVE-2026-5678 | axios,express | Vendor patch note'}
+            style={{minHeight:74,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
+          />
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            <button className="btn btn-outline btn-sm" onClick={buildAdvisoriesFromLines}>Build Advisory JSON</button>
+            <button className="btn btn-outline btn-sm" onClick={()=>setVendorLinesText('ADV-2026-001 | high | CVE-2026-1234 | axios | Axios security fix')}>Load Advisory Example</button>
+          </div>
+          <div className="section-label">Internal docs JSON array</div>
+          <textarea
+            value={internalDocsText}
+            onChange={e=>setInternalDocsText(e.target.value)}
+            placeholder='[{"doc_id":"DOC-SEC-01","title":"Payment Service Threat Notes","systems":["payment-api","reporting"],"tags":["pci"],"content":"axios path used in checkout flow"}]'
+            style={{minHeight:90,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
+          />
+          <div className="section-label">Simple internal-doc input (doc_id | title | systems | tags | content)</div>
+          <textarea
+            value={internalLinesText}
+            onChange={e=>setInternalLinesText(e.target.value)}
+            placeholder={'DOC-SEC-01 | Payment Threat Notes | payment-api,reporting | pci,checkout | axios used in checkout flow'}
+            style={{minHeight:74,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
+          />
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            <button className="btn btn-outline btn-sm" onClick={buildDocsFromLines}>Build Internal Docs JSON</button>
+            <button className="btn btn-outline btn-sm" onClick={()=>setInternalLinesText('DOC-SEC-01 | Payment Threat Notes | payment-api,reporting | pci | axios used in checkout flow')}>Load Docs Example</button>
+          </div>
+          <div className="section-label">Dependency graph JSON array</div>
+          <textarea
+            value={dependencyGraphText}
+            onChange={e=>setDependencyGraphText(e.target.value)}
+            placeholder='[{"source":"axios","target":"payment-api","relation":"depends_on"},{"source":"payment-api","target":"reporting","relation":"calls"}]'
+            style={{minHeight:90,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
+          />
+          <div className="section-label">Simple graph input (one chain per line)</div>
+          <textarea
+            value={graphLinesText}
+            onChange={e=>setGraphLinesText(e.target.value)}
+            placeholder={'axios -> payment-api -> reporting\nexpress -> web-gateway -> auth-service'}
+            style={{minHeight:80,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
+          />
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            <button className="btn btn-outline btn-sm" onClick={buildGraphFromLines}>Build JSON from Lines</button>
+            <button className="btn btn-outline btn-sm" onClick={syncDependenciesFromGraph}>Sync Dependencies from Graph</button>
+            <button className="btn btn-outline btn-sm" onClick={()=>setGraphLinesText('axios -> payment-api -> reporting\njsonwebtoken -> auth-service')}>Load Example</button>
+          </div>
+          <div style={{fontSize:12,color:'var(--text2)'}}>These connector inputs are stored in DB and used to enrich CVE matching and dependency impact.</div>
+          {connectorMsg&&<div style={{fontSize:12,color:'#fca5a5'}}>{connectorMsg}</div>}
         </div>
       </div>
 
@@ -863,8 +1114,8 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
                   <label>Regulatory Exposure (×2.0 multiplier)</label>
                   <div className="checkbox-group" style={{marginTop:4}}>
                     {['PCI','SOX','HIPAA','GDPR','FedRAMP'].map(r=>(
-                      <label key={r} className={`checkbox-item${sysInfo.regulatory.includes(r)?' checked':''}`}>
-                        <input type="checkbox" checked={sysInfo.regulatory.includes(r)} onChange={()=>toggleReg(r)} style={{display:'none'}}/>{r}
+                      <label key={r} className={`checkbox-item${regulatoryList.includes(r)?' checked':''}`}>
+                        <input type="checkbox" checked={regulatoryList.includes(r)} onChange={()=>toggleReg(r)} style={{display:'none'}}/>{r}
                       </label>
                     ))}
                   </div>
