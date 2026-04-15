@@ -428,25 +428,24 @@ function CodeBlock({code, language}) {
 
 // ─── Configure Page ──────────────────────────────────────────────────────────
 function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
-  const savedConfig = readStoredJSON(STORAGE_KEYS.config, {});
-  const [packages,   setPackages]   = useState(() => savedConfig.packages || {});
-  const [fileName,   setFileName]   = useState(() => savedConfig.fileName || '');
-  const [vaCves,     setVaCves]     = useState(() => savedConfig.vaCves || []);
-  const [vaLlmNote,  setVaLlmNote]  = useState(() => savedConfig.vaLlmNote || '');
-  const [vaFile,     setVaFile]     = useState(() => savedConfig.vaFile || '');
+  const [packages,   setPackages]   = useState({});
+  const [fileName,   setFileName]   = useState('');
+  const [vaCves,     setVaCves]     = useState([]);
+  const [vaLlmNote,  setVaLlmNote]  = useState('');
+  const [vaFile,     setVaFile]     = useState('');
   const [vaUploading,setVaUploading]= useState(false);
   const [vaDragging, setVaDragging] = useState(false);
   const [dragging,   setDragging]   = useState(false);
-  const [sysInfo, setSysInfo] = useState(() => savedConfig.sysInfo || {name:'payment-gateway',tier:'critical',regulatory:['PCI'],owner:'security-team',dependencies:[]});
-  const [windows, setWindows] = useState(() => savedConfig.windows || [{day:'Sunday',time:'02:00',duration_hours:4}]);
-  const [team, setTeam] = useState(() => savedConfig.team || [
+  const [sysInfo, setSysInfo] = useState(() => ({name:'payment-gateway',tier:'critical',regulatory:['PCI'],owner:'security-team',dependencies:[]}));
+  const [windows, setWindows] = useState(() => [{day:'Sunday',time:'02:00',duration_hours:4}]);
+  const [team, setTeam] = useState(() => [
     {name:'Alex Chen',   email:'alex@co.com',  expertise:['nodejs','security'], current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:20,work_days:['monday','tuesday','wednesday','thursday','friday']}},
     {name:'Priya Sharma',email:'priya@co.com', expertise:['python','devops'],   current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:15,work_days:['monday','tuesday','wednesday','thursday','friday']}},
     {name:'Marcus Webb', email:'marcus@co.com',expertise:['nodejs','react'],    current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:24,work_days:['monday','tuesday','wednesday','thursday','friday']}},
   ]);
-  const [newMember, setNewMember] = useState(() => savedConfig.newMember || {name:'',email:'',expertiseStr:'',sprintHours:20});
-  const [apiKeys,  setApiKeys]   = useState(() => savedConfig.apiKeys || {anthropic:'',gemini:''});
-  const [nlText, setNlText] = useState(() => savedConfig.nlText || '');
+  const [newMember, setNewMember] = useState({name:'',email:'',expertiseStr:'',sprintHours:20});
+  const [apiKeys,  setApiKeys]   = useState({anthropic:'',gemini:''});
+  const [nlText, setNlText] = useState('');
   const [nlBusy, setNlBusy] = useState(false);
   const [nlMsg, setNlMsg] = useState('');
   const [teamSyncNote, setTeamSyncNote] = useState('');
@@ -455,6 +454,30 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
   useEffect(()=>{
     fetch(`${API_URL}/api/env-status`).then(r=>r.json()).then(d=>{
       setEnvKeys({gemini:!!d.gemini_key_loaded, anthropic:!!d.anthropic_key_loaded, nvd:!!d.nvd_key_loaded});
+    }).catch(()=>{});
+    // Load config from DB on mount
+    fetch(`${API_URL}/api/config/load`).then(r=>r.ok?r.json():null).then(cfg=>{
+      if (cfg) {
+        if (cfg.packages && Object.keys(cfg.packages).length > 0) setPackages(cfg.packages);
+        if (cfg.va_cve_ids && cfg.va_cve_ids.length > 0) setVaCves(cfg.va_cve_ids);
+        if (cfg.system_info) setSysInfo(cfg.system_info);
+        if (cfg.maintenance_windows && cfg.maintenance_windows.length > 0) setWindows(cfg.maintenance_windows);
+        if (cfg.team_members && cfg.team_members.length > 0) {
+          setTeam(cfg.team_members.map(m=>({
+            name: m.name||'Engineer',
+            email: m.email||'',
+            role: m.role||'',
+            linkedin_url: m.linkedin_url||'',
+            professional_summary: m.professional_summary||'',
+            expertise: m.expertise||[],
+            availability_notes: m.availability_notes||'',
+            current_load: m.current_load||0,
+            schedule: m.schedule||{available_hours_per_week:40,sprint_hours_remaining:20,work_days:['monday','tuesday','wednesday','thursday','friday']}
+          })));
+        }
+        if (cfg.api_keys) setApiKeys(cfg.api_keys);
+        if (cfg.nl_text) setNlText(cfg.nl_text);
+      }
     }).catch(()=>{});
     // Auto-load team profiles from DB on mount
     fetch(`${API_URL}/api/team-profiles`).then(r=>r.ok?r.json():{items:[]}).then(d=>{
@@ -584,20 +607,25 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
   };
 
   useEffect(() => {
-    writeStoredJSON(STORAGE_KEYS.config, {
-      packages,
-      fileName,
-      vaCves,
-      vaLlmNote,
-      vaFile,
-      sysInfo,
-      windows,
-      team,
-      newMember,
-      apiKeys,
-      nlText,
-    });
-  }, [packages, fileName, vaCves, vaLlmNote, vaFile, sysInfo, windows, team, newMember, apiKeys, nlText]);
+    // Auto-save config to DB (debounced: only save changes, not on every keystroke)
+    const saveTimer = setTimeout(() => {
+      fetch(`${API_URL}/api/config/save`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          packages,
+          va_cve_ids: vaCves,
+          system_info: sysInfo,
+          maintenance_windows: windows,
+          team_members: team,
+          exploit_language: exploitLang,
+          api_keys: apiKeys,
+          nl_text: nlText,
+        }),
+      }).catch(()=>{});
+    }, 1000);
+    return () => clearTimeout(saveTimer);
+  }, [packages, vaCves, sysInfo, windows, team, exploitLang, apiKeys, nlText]);
 
   const hasApiKey = !!(apiKeys.anthropic || apiKeys.gemini || envKeys.gemini || envKeys.anthropic);
   const canRun = Object.keys(packages).length > 0 || vaCves.length > 0;

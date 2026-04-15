@@ -87,6 +87,23 @@ def _db_init() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_config (
+                id TEXT PRIMARY KEY DEFAULT 'default',
+                packages_json TEXT NOT NULL DEFAULT '{}',
+                va_cve_ids_json TEXT NOT NULL DEFAULT '[]',
+                system_info_json TEXT NOT NULL DEFAULT '{}',
+                maintenance_windows_json TEXT NOT NULL DEFAULT '[]',
+                team_members_json TEXT NOT NULL DEFAULT '[]',
+                exploit_language TEXT NOT NULL DEFAULT 'python',
+                api_keys_json TEXT NOT NULL DEFAULT '{}',
+                nl_text TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 app = FastAPI(title="VulnPriority AI", version="3.0.0")
@@ -166,6 +183,17 @@ class NaturalLanguageConfigRequest(BaseModel):
     current_maintenance_windows: List[MaintenanceWindow] = []
     gemini_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
+
+
+class AnalysisConfigPayload(BaseModel):
+    packages: Dict[str, str] = {}
+    va_cve_ids: List[str] = []
+    system_info: Optional[SystemInfo] = None
+    maintenance_windows: List[MaintenanceWindow] = []
+    team_members: List[TeamMember] = []
+    exploit_language: str = "python"
+    api_keys: Dict[str, str] = {}
+    nl_text: str = ""
 
 
 def _json_loads_safe(raw: Any, fallback: Any) -> Any:
@@ -2413,6 +2441,68 @@ async def clear_scans():
         conn.execute("DELETE FROM scan_history")
         conn.commit()
     return {"deleted": True}
+
+
+@app.post("/api/config/save")
+async def save_config(payload: AnalysisConfigPayload):
+    """Save analysis configuration to database."""
+    cfg_id = "default"
+    now = datetime.utcnow().isoformat()
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_config 
+            (id, packages_json, va_cve_ids_json, system_info_json, maintenance_windows_json, 
+             team_members_json, exploit_language, api_keys_json, nl_text, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                cfg_id,
+                json.dumps(payload.packages),
+                json.dumps(payload.va_cve_ids),
+                json.dumps(payload.system_info.model_dump()) if payload.system_info else json.dumps({}),
+                json.dumps([w.model_dump() for w in (payload.maintenance_windows or [])]),
+                json.dumps([m.model_dump() for m in (payload.team_members or [])]),
+                payload.exploit_language,
+                json.dumps(payload.api_keys),
+                payload.nl_text,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+    return {"saved": True, "id": cfg_id}
+
+
+@app.get("/api/config/load")
+async def load_config():
+    """Load analysis configuration from database."""
+    cfg_id = "default"
+    with _db_connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM analysis_config WHERE id = ?", (cfg_id,)
+        ).fetchone()
+    if not row:
+        return {
+            "packages": {},
+            "va_cve_ids": [],
+            "system_info": None,
+            "maintenance_windows": [],
+            "team_members": [],
+            "exploit_language": "python",
+            "api_keys": {},
+            "nl_text": "",
+        }
+    return {
+        "packages": _json_loads_safe(row["packages_json"], {}),
+        "va_cve_ids": _json_loads_safe(row["va_cve_ids_json"], []),
+        "system_info": _json_loads_safe(row["system_info_json"], None),
+        "maintenance_windows": _json_loads_safe(row["maintenance_windows_json"], []),
+        "team_members": _json_loads_safe(row["team_members_json"], []),
+        "exploit_language": row["exploit_language"],
+        "api_keys": _json_loads_safe(row["api_keys_json"], {}),
+        "nl_text": row["nl_text"],
+    }
 
 
 def _default_system_info() -> Dict[str, Any]:
