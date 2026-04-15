@@ -160,6 +160,14 @@ class ScanRecordRequest(BaseModel):
     result_payload: Dict[str, Any] = {}
 
 
+class NaturalLanguageConfigRequest(BaseModel):
+    text: str
+    current_system_info: Optional[SystemInfo] = None
+    current_maintenance_windows: List[MaintenanceWindow] = []
+    gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+
+
 def _json_loads_safe(raw: Any, fallback: Any) -> Any:
     try:
         if raw is None:
@@ -505,6 +513,128 @@ def _coerce_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+_DAY_ALIASES: Dict[str, str] = {
+    "mon": "Monday", "monday": "Monday",
+    "tue": "Tuesday", "tues": "Tuesday", "tuesday": "Tuesday",
+    "wed": "Wednesday", "wednesday": "Wednesday",
+    "thu": "Thursday", "thur": "Thursday", "thurs": "Thursday", "thursday": "Thursday",
+    "fri": "Friday", "friday": "Friday",
+    "sat": "Saturday", "saturday": "Saturday",
+    "sun": "Sunday", "sunday": "Sunday",
+}
+
+
+def _normalize_time_token(raw: str) -> Optional[str]:
+    token = (raw or "").strip().lower()
+    if not token:
+        return None
+    m = re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$", token)
+    if not m:
+        return None
+    hour = int(m.group(1))
+    minute = int(m.group(2) or "0")
+    ampm = m.group(3)
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _extract_maintenance_windows_from_text(text: str) -> List[Dict[str, Any]]:
+    windows: List[Dict[str, Any]] = []
+    lowered = (text or "").lower()
+    day_pat = re.compile(
+        r"\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b",
+        re.IGNORECASE,
+    )
+    time_pat = re.compile(r"\b(?:at\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b", re.IGNORECASE)
+    dur_pat = re.compile(r"\bfor\s*(\d{1,2})\s*(?:h|hr|hrs|hour|hours)\b", re.IGNORECASE)
+
+    for m in day_pat.finditer(lowered):
+        day_raw = m.group(1) or ""
+        day = _DAY_ALIASES.get(day_raw[:3], _DAY_ALIASES.get(day_raw, "Sunday"))
+        lookahead = lowered[m.start(): min(len(lowered), m.end() + 80)]
+        time_match = time_pat.search(lookahead)
+        dur_match = dur_pat.search(lookahead)
+        time_val = _normalize_time_token(time_match.group(1) if time_match else "") or "02:00"
+        duration = _coerce_int(dur_match.group(1) if dur_match else None, 4)
+        duration = max(1, min(24, duration))
+        windows.append({"day": day, "time": time_val, "duration_hours": duration})
+
+    unique: List[Dict[str, Any]] = []
+    seen: Set[Tuple[str, str]] = set()
+    for w in windows:
+        key = (w["day"], w["time"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(w)
+    return unique[:7]
+
+
+def _extract_dependencies_from_text(text: str) -> List[str]:
+    m = re.search(
+        r"(?i)depend(?:s|encies)?\s*(?:on)?\s*[:=-]?\s*([^\n\r.;]+)",
+        text or "",
+    )
+    if not m:
+        return []
+    raw = re.split(r"(?i)\b(patch|maintenance|window|schedule|owner|tier)\b", m.group(1))[0]
+    parts = [p.strip() for p in re.split(r"[,;/]|\band\b", raw, flags=re.IGNORECASE)]
+    return [p for p in parts if len(p) >= 2][:10]
+
+
+def _extract_system_name_from_text(text: str) -> Optional[str]:
+    patterns = [
+        r"(?i)system\s*(?:name)?\s*[:=-]\s*([a-z0-9][a-z0-9._\- ]{2,60})",
+        r"(?i)application\s*(?:name)?\s*[:=-]\s*([a-z0-9][a-z0-9._\- ]{2,60})",
+        r"(?i)for\s+([a-z0-9][a-z0-9._\- ]{2,60})\s+system",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text or "")
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _extract_owner_from_text(text: str) -> Optional[str]:
+    m = re.search(r"(?i)owner\s*[:=-]\s*([^\n\r.;]+)", text or "")
+    if not m:
+        return None
+    raw = re.split(r"(?i)\b(depends|patch|maintenance|window|tier|regulat)\w*\b", m.group(1))[0]
+    return raw.strip()[:80] or None
+
+
+def _extract_tier_from_text(text: str) -> Optional[str]:
+    lowered = (text or "").lower()
+    if re.search(r"\bcritical\b", lowered):
+        return "critical"
+    if re.search(r"\bimportant\b|\bhigh\b", lowered):
+        return "important"
+    if re.search(r"\bstandard\b|\blow\b|\bnormal\b", lowered):
+        return "standard"
+    return None
+
+
+def _extract_regulatory_from_text(text: str) -> List[str]:
+    lowered = (text or "").lower()
+    regs: List[str] = []
+    if "pci" in lowered:
+        regs.append("PCI")
+    if "sox" in lowered:
+        regs.append("SOX")
+    if "hipaa" in lowered:
+        regs.append("HIPAA")
+    if "gdpr" in lowered:
+        regs.append("GDPR")
+    if "fedramp" in lowered:
+        regs.append("FedRAMP")
+    return regs
 
 
 async def _nvd_fetch_cve(cve_id: str) -> Optional[Dict]:
@@ -2283,6 +2413,70 @@ async def clear_scans():
         conn.execute("DELETE FROM scan_history")
         conn.commit()
     return {"deleted": True}
+
+
+def _default_system_info() -> Dict[str, Any]:
+    return {
+        "name": "payment-gateway",
+        "tier": "standard",
+        "regulatory": ["PCI"],
+        "owner": "security-team",
+        "dependencies": [],
+    }
+
+
+@app.post("/api/parse-config-nl")
+async def parse_config_nl(payload: NaturalLanguageConfigRequest):
+    text = (payload.text or "").strip()
+    current_sys = payload.current_system_info.model_dump() if payload.current_system_info else {}
+    base_sys = {**_default_system_info(), **current_sys}
+
+    parsed_name = _extract_system_name_from_text(text)
+    parsed_owner = _extract_owner_from_text(text)
+    parsed_tier = _extract_tier_from_text(text)
+    parsed_regs = _extract_regulatory_from_text(text)
+    parsed_deps = _extract_dependencies_from_text(text)
+    parsed_windows = _extract_maintenance_windows_from_text(text)
+
+    merged_system = {
+        "name": parsed_name or base_sys.get("name") or "payment-gateway",
+        "tier": parsed_tier or base_sys.get("tier") or "standard",
+        "regulatory": parsed_regs or list(base_sys.get("regulatory") or ["PCI"]),
+        "owner": parsed_owner or base_sys.get("owner") or "security-team",
+        "dependencies": parsed_deps or list(base_sys.get("dependencies") or []),
+    }
+    merged_windows = (
+        parsed_windows
+        or [w.model_dump() for w in (payload.current_maintenance_windows or [])]
+        or [{"day": "Sunday", "time": "02:00", "duration_hours": 4}]
+    )
+
+    hints: List[str] = []
+    if parsed_name:
+        hints.append(f"set system name to '{parsed_name}'")
+    if parsed_tier:
+        hints.append(f"set tier to '{parsed_tier}'")
+    if parsed_regs:
+        hints.append(f"detected regulations: {', '.join(parsed_regs)}")
+    if parsed_deps:
+        hints.append(f"captured {len(parsed_deps)} dependencies")
+    if parsed_windows:
+        hints.append(f"parsed {len(parsed_windows)} maintenance window(s)")
+    if not hints:
+        hints.append("no specific config found, kept existing/default values")
+
+    return {
+        "system_info": merged_system,
+        "maintenance_windows": merged_windows,
+        "assistant_message": "Applied natural-language config: " + "; ".join(hints) + ".",
+        "parsed": {
+            "name": parsed_name,
+            "tier": parsed_tier,
+            "regulatory": parsed_regs,
+            "dependencies": parsed_deps,
+            "maintenance_windows": parsed_windows,
+        },
+    }
 
 
 @app.post("/api/analyze")

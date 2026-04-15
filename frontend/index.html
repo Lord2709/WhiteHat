@@ -446,6 +446,9 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
   ]);
   const [newMember, setNewMember] = useState(() => savedConfig.newMember || {name:'',email:'',expertiseStr:'',sprintHours:20});
   const [apiKeys,  setApiKeys]   = useState(() => savedConfig.apiKeys || {anthropic:'',gemini:''});
+  const [nlText, setNlText] = useState(() => savedConfig.nlText || '');
+  const [nlBusy, setNlBusy] = useState(false);
+  const [nlMsg, setNlMsg] = useState('');
   const [teamSyncNote, setTeamSyncNote] = useState('');
   const [envKeys,  setEnvKeys]   = useState({gemini:false,anthropic:false,nvd:false});
   const [showApiModal, setShowApiModal] = useState(false);
@@ -453,7 +456,15 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
     fetch(`${API_URL}/api/env-status`).then(r=>r.json()).then(d=>{
       setEnvKeys({gemini:!!d.gemini_key_loaded, anthropic:!!d.anthropic_key_loaded, nvd:!!d.nvd_key_loaded});
     }).catch(()=>{});
-  },[]);
+    // Auto-load team profiles from DB on mount
+    fetch(`${API_URL}/api/team-profiles`).then(r=>r.ok?r.json():{items:[]}).then(d=>{
+      if (Array.isArray(d.items) && d.items.length > 0) {
+        const imported = d.items.map(teamProfileToMember);
+        setTeam(imported);
+        setTeamSyncNote(`Auto-loaded ${imported.length} team profile(s) from database.`);
+      }
+    }).catch(()=>{});
+  }, []);
   const fileRef = useRef(null);
   const vaRef   = useRef(null);
   const sampleRef = useRef(null);
@@ -584,8 +595,9 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
       team,
       newMember,
       apiKeys,
+      nlText,
     });
-  }, [packages, fileName, vaCves, vaLlmNote, vaFile, sysInfo, windows, team, newMember, apiKeys]);
+  }, [packages, fileName, vaCves, vaLlmNote, vaFile, sysInfo, windows, team, newMember, apiKeys, nlText]);
 
   const hasApiKey = !!(apiKeys.anthropic || apiKeys.gemini || envKeys.gemini || envKeys.anthropic);
   const canRun = Object.keys(packages).length > 0 || vaCves.length > 0;
@@ -594,6 +606,36 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
     onRun({packages, va_cve_ids:vaCves, system_info:sysInfo, maintenance_windows:windows,
            team_members:team, exploit_language:exploitLang,
            anthropic_api_key:apiKeys.anthropic||null, gemini_api_key:apiKeys.gemini||null});
+  };
+
+  const applyNaturalLanguageConfig = async () => {
+    if (!nlText.trim()) {
+      setNlMsg('Type a short description first, for example: "Critical payment system, PCI + SOX, patch Sunday 1am for 3 hours".');
+      return;
+    }
+    setNlBusy(true);
+    setNlMsg('');
+    try {
+      const resp = await fetch(`${API_URL}/api/parse-config-nl`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          text: nlText,
+          current_system_info: sysInfo,
+          current_maintenance_windows: windows,
+          anthropic_api_key: apiKeys.anthropic || null,
+          gemini_api_key: apiKeys.gemini || null,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      if (data.system_info) setSysInfo(data.system_info);
+      if (Array.isArray(data.maintenance_windows) && data.maintenance_windows.length) setWindows(data.maintenance_windows);
+      setNlMsg(data.assistant_message || 'Configuration updated from natural-language input.');
+    } catch (err) {
+      setNlMsg(`Unable to parse natural-language config: ${err.message}`);
+    }
+    setNlBusy(false);
   };
 
   return (
@@ -617,6 +659,24 @@ function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
             <button className="btn btn-outline btn-sm" onClick={()=>setShowApiModal(true)}><Key/> {(envKeys.gemini||envKeys.anthropic)?'✓ .env Keys Active':'API Keys Optional'}</button>
             <button className="btn btn-primary" disabled={!canRun} onClick={handleRun} title={!hasApiKey?'Runs in verified-data mode without Gemini/Anthropic; add a key for LLM research and PoCs.':undefined}><Play/> Run Agentic Analysis</button>
           </div>
+        </div>
+      </div>
+
+      <div className="card" style={{marginBottom:18}}>
+        <div className="card-header"><span>💬</span><span className="card-title">Config Chat</span></div>
+        <div className="card-body" style={{display:'grid',gap:10}}>
+          <div className="section-label">Describe system, regulations, and maintenance in plain English</div>
+          <textarea
+            value={nlText}
+            onChange={e=>setNlText(e.target.value)}
+            placeholder="Example: Payment API for checkout, owner platform-security, critical tier, PCI + GDPR, depends on stripe and redis, patch on Sunday at 01:00 for 3 hours"
+            style={{minHeight:90,resize:'vertical',background:'#0b1224',color:'#e5e7eb',border:'1px solid #334155',borderRadius:10,padding:'10px 12px'}}
+          />
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            <button className="btn btn-primary btn-sm" onClick={applyNaturalLanguageConfig} disabled={nlBusy}>{nlBusy?'Parsing...':'Apply from Chat'}</button>
+            <button className="btn btn-outline btn-sm" onClick={()=>setNlText('')}>Clear</button>
+          </div>
+          {nlMsg&&<div style={{fontSize:12,color:'var(--text2)'}}>{nlMsg}</div>}
         </div>
       </div>
 
