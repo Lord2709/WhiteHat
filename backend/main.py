@@ -21,99 +21,33 @@ from itertools import zip_longest
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import httpx
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-
-# Load .env from the same directory as this file
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
-
-# Keys from .env — ignore placeholder values
-def _env_key(name: str) -> Optional[str]:
-    val = os.getenv(name, "").strip()
-    return val if val and not val.startswith("your_") else None
-
-ENV_GEMINI_KEY    = _env_key("GEMINI_API_KEY")
-ENV_ANTHROPIC_KEY = _env_key("ANTHROPIC_API_KEY")
-ENV_NVD_KEY       = _env_key("NVD_API_KEY")     # optional — removes 5-req/30s rate limit
-SAMPLE_DATA_DIR   = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sample_data"))
-DATA_DIR          = os.path.abspath(os.path.join(os.path.dirname(__file__), "data"))
-DB_PATH           = os.path.join(DATA_DIR, "whitehat.db")
+from fastapi.staticfiles import StaticFiles
+from config import ENV_ANTHROPIC_KEY, ENV_GEMINI_KEY, ENV_NVD_KEY, SAMPLE_DATA_DIR
+from connectors import apply_connector_signals
+from db import (
+    db_connect as _db_connect,
+    db_init as _db_init,
+    json_loads_safe as _json_loads_safe,
+    scan_row_to_meta as _scan_row_to_meta,
+    team_profile_row_to_dict as _team_profile_row_to_dict,
+)
+from schemas import (
+    AnalysisConfigPayload,
+    AnalyzeRequest,
+    ExploitRequest,
+    MaintenanceWindow,
+    NaturalLanguageConfigRequest,
+    ScanRecordRequest,
+    SystemInfo,
+    TeamMember,
+    TeamProfileRequest,
+)
 _NVD_CVE_CACHE: Dict[str, Optional[Dict]] = {}
 _NVD_HISTORY_CACHE: Dict[str, List[Dict[str, Any]]] = {}
-
-
-def _db_connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _ensure_table_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    if column not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
-
-def _db_init() -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with _db_connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS team_profiles (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT '',
-                linkedin_url TEXT NOT NULL DEFAULT '',
-                professional_summary TEXT NOT NULL DEFAULT '',
-                expertise_json TEXT NOT NULL DEFAULT '[]',
-                availability_notes TEXT NOT NULL DEFAULT '',
-                current_load INTEGER NOT NULL DEFAULT 0,
-                available_hours_per_week INTEGER NOT NULL DEFAULT 40,
-                sprint_hours_remaining INTEGER NOT NULL DEFAULT 20,
-                work_days_json TEXT NOT NULL DEFAULT '["monday","tuesday","wednesday","thursday","friday"]',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS scan_history (
-                id TEXT PRIMARY KEY,
-                label TEXT NOT NULL,
-                system_name TEXT NOT NULL DEFAULT '',
-                counts_json TEXT NOT NULL DEFAULT '{}',
-                request_json TEXT NOT NULL DEFAULT '{}',
-                result_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS analysis_config (
-                id TEXT PRIMARY KEY DEFAULT 'default',
-                packages_json TEXT NOT NULL DEFAULT '{}',
-                va_cve_ids_json TEXT NOT NULL DEFAULT '[]',
-                system_info_json TEXT NOT NULL DEFAULT '{}',
-                maintenance_windows_json TEXT NOT NULL DEFAULT '[]',
-                team_members_json TEXT NOT NULL DEFAULT '[]',
-                exploit_language TEXT NOT NULL DEFAULT 'python',
-                api_keys_json TEXT NOT NULL DEFAULT '{}',
-                nl_text TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        _ensure_table_column(conn, "analysis_config", "vendor_advisories_json", "TEXT NOT NULL DEFAULT '[]'")
-        _ensure_table_column(conn, "analysis_config", "internal_docs_json", "TEXT NOT NULL DEFAULT '[]'")
-        _ensure_table_column(conn, "analysis_config", "dependency_graph_json", "TEXT NOT NULL DEFAULT '[]'")
-        conn.commit()
+FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 
 app = FastAPI(title="VulnPriority AI", version="3.0.0")
 app.add_middleware(
@@ -122,249 +56,6 @@ app.add_middleware(
 )
 
 _db_init()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MODELS
-# ─────────────────────────────────────────────────────────────────────────────
-
-class DevSchedule(BaseModel):
-    available_hours_per_week: int = 40
-    sprint_hours_remaining: int = 20
-    work_days: List[str] = ["monday","tuesday","wednesday","thursday","friday"]
-
-class TeamMember(BaseModel):
-    name: str
-    email: str
-    role: str = ""
-    linkedin_url: str = ""
-    professional_summary: str = ""
-    expertise: List[str]
-    availability_notes: str = ""
-    current_load: int = 0
-    schedule: DevSchedule = DevSchedule()
-
-class SystemInfo(BaseModel):
-    name: str
-    tier: str
-    regulatory: List[str]
-    owner: str = "security-team"
-    dependencies: List[str] = []
-
-class MaintenanceWindow(BaseModel):
-    day: str
-    time: str = "02:00"
-    duration_hours: int = 4
-
-
-class VendorAdvisory(BaseModel):
-    advisory_id: str = ""
-    title: str = ""
-    severity: str = "medium"
-    cve_ids: List[str] = []
-    affected_packages: List[str] = []
-    summary: str = ""
-    url: str = ""
-    published: str = ""
-
-
-class InternalDoc(BaseModel):
-    doc_id: str = ""
-    title: str = ""
-    systems: List[str] = []
-    tags: List[str] = []
-    criticality: str = ""
-    content: str = ""
-
-
-class DependencyEdge(BaseModel):
-    source: str
-    target: str
-    relation: str = "depends_on"
-
-class AnalyzeRequest(BaseModel):
-    packages: Dict[str, str] = {}
-    va_cve_ids: List[str] = []
-    system_info: SystemInfo
-    maintenance_windows: List[MaintenanceWindow] = []
-    team_members: List[TeamMember] = []
-    vendor_advisories: List[VendorAdvisory] = []
-    internal_docs: List[InternalDoc] = []
-    dependency_graph: List[DependencyEdge] = []
-    exploit_language: str = "python"
-    anthropic_api_key: Optional[str] = None
-    gemini_api_key: Optional[str] = None
-
-
-class TeamProfileRequest(BaseModel):
-    name: str
-    email: str
-    role: str = ""
-    linkedin_url: str = ""
-    professional_summary: str = ""
-    expertise: List[str] = []
-    availability_notes: str = ""
-    current_load: int = 0
-    schedule: DevSchedule = DevSchedule()
-
-
-class ScanRecordRequest(BaseModel):
-    label: str
-    system_name: str = ""
-    counts: Dict[str, int] = {}
-    request_payload: Dict[str, Any] = {}
-    result_payload: Dict[str, Any] = {}
-
-
-class NaturalLanguageConfigRequest(BaseModel):
-    text: str
-    current_system_info: Optional[SystemInfo] = None
-    current_maintenance_windows: List[MaintenanceWindow] = []
-    gemini_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-
-
-class AnalysisConfigPayload(BaseModel):
-    packages: Dict[str, str] = {}
-    va_cve_ids: List[str] = []
-    system_info: Optional[SystemInfo] = None
-    maintenance_windows: List[MaintenanceWindow] = []
-    team_members: List[TeamMember] = []
-    vendor_advisories: List[VendorAdvisory] = []
-    internal_docs: List[InternalDoc] = []
-    dependency_graph: List[DependencyEdge] = []
-    exploit_language: str = "python"
-    api_keys: Dict[str, str] = {}
-    nl_text: str = ""
-
-
-def _json_loads_safe(raw: Any, fallback: Any) -> Any:
-    try:
-        if raw is None:
-            return fallback
-        return json.loads(raw)
-    except Exception:
-        return fallback
-
-
-def _team_profile_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "email": row["email"],
-        "role": row["role"],
-        "linkedin_url": row["linkedin_url"],
-        "professional_summary": row["professional_summary"],
-        "expertise": _json_loads_safe(row["expertise_json"], []),
-        "availability_notes": row["availability_notes"],
-        "current_load": int(row["current_load"] or 0),
-        "schedule": {
-            "available_hours_per_week": int(row["available_hours_per_week"] or 40),
-            "sprint_hours_remaining": int(row["sprint_hours_remaining"] or 20),
-            "work_days": _json_loads_safe(
-                row["work_days_json"],
-                ["monday", "tuesday", "wednesday", "thursday", "friday"],
-            ),
-        },
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-    }
-
-
-def _scan_row_to_meta(row: sqlite3.Row) -> Dict[str, Any]:
-    return {
-        "id": row["id"],
-        "label": row["label"],
-        "system_name": row["system_name"],
-        "counts": _json_loads_safe(row["counts_json"], {}),
-        "created_at": row["created_at"],
-    }
-
-
-def _norm_token(value: str) -> str:
-    return re.sub(r"[^a-z0-9._\-/@]+", "", (value or "").strip().lower())
-
-
-def _package_base_name(package_value: str) -> str:
-    raw = (package_value or "").strip().lower()
-    if "@" in raw and not raw.startswith("@"):
-        return raw.split("@", 1)[0]
-    return raw
-
-
-def _dependency_reach(start: str, edges: List[Dict[str, Any]], max_nodes: int = 25) -> List[str]:
-    index: Dict[str, Set[str]] = {}
-    for e in edges:
-        src = _norm_token(str(e.get("source", "")))
-        tgt = _norm_token(str(e.get("target", "")))
-        if not src or not tgt:
-            continue
-        index.setdefault(src, set()).add(tgt)
-    seen: Set[str] = set()
-    queue: List[str] = [_norm_token(start)]
-    while queue and len(seen) < max_nodes:
-        cur = queue.pop(0)
-        for nxt in sorted(index.get(cur, set())):
-            if nxt in seen:
-                continue
-            seen.add(nxt)
-            queue.append(nxt)
-            if len(seen) >= max_nodes:
-                break
-    return list(seen)
-
-
-def apply_connector_signals(
-    vuln: Dict[str, Any],
-    advisories: List[VendorAdvisory],
-    internal_docs: List[InternalDoc],
-    dependency_graph: List[DependencyEdge],
-) -> Dict[str, Any]:
-    cve_id = _norm_token(str(vuln.get("cve_id", "")))
-    pkg = _package_base_name(str(vuln.get("package", "")))
-
-    advisory_hits: List[str] = []
-    for adv in advisories:
-        cves = {_norm_token(c) for c in (adv.cve_ids or [])}
-        adv_pkgs = {_package_base_name(p) for p in (adv.affected_packages or [])}
-        text_blob = " ".join([adv.title or "", adv.summary or "", adv.advisory_id or ""]).lower()
-        if cve_id and cve_id in cves:
-            advisory_hits.append(adv.advisory_id or adv.title or "vendor-advisory")
-        elif pkg and (pkg in adv_pkgs or pkg in text_blob):
-            advisory_hits.append(adv.advisory_id or adv.title or "vendor-advisory")
-
-    doc_hits: List[str] = []
-    doc_systems: Set[str] = set()
-    for doc in internal_docs:
-        blob = " ".join([
-            doc.title or "",
-            doc.content or "",
-            " ".join(doc.tags or []),
-            " ".join(doc.systems or []),
-        ]).lower()
-        if (cve_id and cve_id in blob) or (pkg and pkg in blob):
-            doc_hits.append(doc.doc_id or doc.title or "internal-doc")
-            for s in (doc.systems or []):
-                if s:
-                    doc_systems.add(str(s))
-
-    dep_reach = _dependency_reach(pkg, [e.model_dump() for e in dependency_graph]) if pkg else []
-
-    connector_signals = {
-        "vendor_advisory_hits": len(advisory_hits),
-        "internal_doc_hits": len(doc_hits),
-        "dependency_reach": len(dep_reach),
-        "matched_advisories": advisory_hits[:5],
-        "matched_docs": doc_hits[:5],
-        "dependency_downstream": dep_reach[:8],
-    }
-
-    affected = list(vuln.get("affected_systems", []) or [])
-    for item in list(doc_systems) + dep_reach:
-        if item not in affected:
-            affected.append(item)
-    vuln["affected_systems"] = affected[:10]
-    vuln["connector_signals"] = connector_signals
-    return connector_signals
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM HELPER LAYER
@@ -3031,21 +2722,6 @@ async def analyze(request: AnalyzeRequest):
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
-
-class ExploitRequest(BaseModel):
-    cve_id:      str
-    description: str = ""
-    full_research: str = ""
-    package:     str = ""
-    version:     str = ""
-    language:    str = "python"
-    cvss:        float = 5.0
-    references:  List[str] = []
-    research_grounded: bool = False
-    gemini_api_key:    Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-
-
 @app.post("/api/generate-exploit")
 async def generate_exploit_endpoint(req: ExploitRequest):
     """
@@ -3085,3 +2761,6 @@ async def env_status():
         "anthropic_key_loaded": ENV_ANTHROPIC_KEY is not None,
         "nvd_key_loaded":       ENV_NVD_KEY is not None,
     }
+
+
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
