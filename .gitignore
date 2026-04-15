@@ -9,6 +9,10 @@
 *.pyo
 *.pyd
 
+# Runtime database artifacts
+/backend/data/*.db
+/backend/data/*.db-*
+
 # Local editor and OS files
 .vscode/
 Thumbs.db

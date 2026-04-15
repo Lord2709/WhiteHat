@@ -14,7 +14,7 @@ Every intelligence decision is delegated to an LLM:
   • Schedule assignment → sprint-capacity math (deterministic, not opinion)
 """
 
-import asyncio, json, math, os, re
+import asyncio, json, math, os, re, sqlite3, uuid
 from datetime import datetime, timedelta
 from io import BytesIO
 from itertools import zip_longest
@@ -39,14 +39,63 @@ ENV_GEMINI_KEY    = _env_key("GEMINI_API_KEY")
 ENV_ANTHROPIC_KEY = _env_key("ANTHROPIC_API_KEY")
 ENV_NVD_KEY       = _env_key("NVD_API_KEY")     # optional — removes 5-req/30s rate limit
 SAMPLE_DATA_DIR   = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sample_data"))
+DATA_DIR          = os.path.abspath(os.path.join(os.path.dirname(__file__), "data"))
+DB_PATH           = os.path.join(DATA_DIR, "whitehat.db")
 _NVD_CVE_CACHE: Dict[str, Optional[Dict]] = {}
 _NVD_HISTORY_CACHE: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def _db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _db_init() -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS team_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT '',
+                linkedin_url TEXT NOT NULL DEFAULT '',
+                professional_summary TEXT NOT NULL DEFAULT '',
+                expertise_json TEXT NOT NULL DEFAULT '[]',
+                availability_notes TEXT NOT NULL DEFAULT '',
+                current_load INTEGER NOT NULL DEFAULT 0,
+                available_hours_per_week INTEGER NOT NULL DEFAULT 40,
+                sprint_hours_remaining INTEGER NOT NULL DEFAULT 20,
+                work_days_json TEXT NOT NULL DEFAULT '["monday","tuesday","wednesday","thursday","friday"]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scan_history (
+                id TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                system_name TEXT NOT NULL DEFAULT '',
+                counts_json TEXT NOT NULL DEFAULT '{}',
+                request_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
 
 app = FastAPI(title="VulnPriority AI", version="3.0.0")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
+
+_db_init()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MODELS
@@ -60,7 +109,11 @@ class DevSchedule(BaseModel):
 class TeamMember(BaseModel):
     name: str
     email: str
+    role: str = ""
+    linkedin_url: str = ""
+    professional_summary: str = ""
     expertise: List[str]
+    availability_notes: str = ""
     current_load: int = 0
     schedule: DevSchedule = DevSchedule()
 
@@ -85,6 +138,69 @@ class AnalyzeRequest(BaseModel):
     exploit_language: str = "python"
     anthropic_api_key: Optional[str] = None
     gemini_api_key: Optional[str] = None
+
+
+class TeamProfileRequest(BaseModel):
+    name: str
+    email: str
+    role: str = ""
+    linkedin_url: str = ""
+    professional_summary: str = ""
+    expertise: List[str] = []
+    availability_notes: str = ""
+    current_load: int = 0
+    schedule: DevSchedule = DevSchedule()
+
+
+class ScanRecordRequest(BaseModel):
+    label: str
+    system_name: str = ""
+    counts: Dict[str, int] = {}
+    request_payload: Dict[str, Any] = {}
+    result_payload: Dict[str, Any] = {}
+
+
+def _json_loads_safe(raw: Any, fallback: Any) -> Any:
+    try:
+        if raw is None:
+            return fallback
+        return json.loads(raw)
+    except Exception:
+        return fallback
+
+
+def _team_profile_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "email": row["email"],
+        "role": row["role"],
+        "linkedin_url": row["linkedin_url"],
+        "professional_summary": row["professional_summary"],
+        "expertise": _json_loads_safe(row["expertise_json"], []),
+        "availability_notes": row["availability_notes"],
+        "current_load": int(row["current_load"] or 0),
+        "schedule": {
+            "available_hours_per_week": int(row["available_hours_per_week"] or 40),
+            "sprint_hours_remaining": int(row["sprint_hours_remaining"] or 20),
+            "work_days": _json_loads_safe(
+                row["work_days_json"],
+                ["monday", "tuesday", "wednesday", "thursday", "friday"],
+            ),
+        },
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _scan_row_to_meta(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "system_name": row["system_name"],
+        "counts": _json_loads_safe(row["counts_json"], {}),
+        "created_at": row["created_at"],
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM HELPER LAYER
@@ -1860,9 +1976,30 @@ def schedule_assign(vuln: Dict, team: List[TeamMember], today: datetime) -> Dict
     hours     = vuln.get("estimated_hours", 2)
 
     def rank(m: TeamMember):
-        skill_ok = any(required.lower() in e.lower() for e in m.expertise)
+        profile_blob = " ".join([
+            m.role or "",
+            m.linkedin_url or "",
+            m.professional_summary or "",
+            m.availability_notes or "",
+            " ".join(m.expertise or []),
+        ]).lower()
+        required_synonyms = {
+            "nodejs": ["node", "nodejs", "javascript", "typescript", "react", "next"],
+            "python": ["python", "django", "flask", "fastapi", "pandas"],
+            "java": ["java", "spring", "jvm", "maven", "kotlin"],
+            "general": ["security", "backend", "software"],
+        }
+        skill_terms = required_synonyms.get(required.lower(), [required.lower()])
+        skill_hits = sum(1 for term in skill_terms if term in profile_blob)
+        has_direct_skill = any(required.lower() in (e or "").lower() for e in m.expertise)
         cap_ok   = m.schedule.sprint_hours_remaining >= hours
-        return (not skill_ok, not cap_ok, -m.schedule.sprint_hours_remaining)
+        return (
+            not has_direct_skill,
+            -skill_hits,
+            not cap_ok,
+            m.current_load,
+            -m.schedule.sprint_hours_remaining,
+        )
 
     best      = sorted(team, key=rank)[0]
     work_days = best.schedule.work_days or ["monday","tuesday","wednesday","thursday","friday"]
@@ -1973,6 +2110,179 @@ async def sample_input():
         "team_members": bundle["team_members"],
         "maintenance_windows": bundle["maintenance_windows"],
     }
+
+
+@app.get("/api/team-profiles")
+async def list_team_profiles():
+    with _db_connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM team_profiles ORDER BY updated_at DESC"
+        ).fetchall()
+    return {"items": [_team_profile_row_to_dict(r) for r in rows]}
+
+
+@app.post("/api/team-profiles")
+async def create_team_profile(payload: TeamProfileRequest):
+    now = datetime.utcnow().isoformat()
+    profile_id = str(uuid.uuid4())
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO team_profiles (
+                id, name, email, role, linkedin_url, professional_summary,
+                expertise_json, availability_notes, current_load,
+                available_hours_per_week, sprint_hours_remaining, work_days_json,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                profile_id,
+                payload.name,
+                payload.email,
+                payload.role,
+                payload.linkedin_url,
+                payload.professional_summary,
+                json.dumps(payload.expertise),
+                payload.availability_notes,
+                payload.current_load,
+                payload.schedule.available_hours_per_week,
+                payload.schedule.sprint_hours_remaining,
+                json.dumps(payload.schedule.work_days),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM team_profiles WHERE id = ?", (profile_id,)).fetchone()
+    return _team_profile_row_to_dict(row)
+
+
+@app.put("/api/team-profiles/{profile_id}")
+async def update_team_profile(profile_id: str, payload: TeamProfileRequest):
+    now = datetime.utcnow().isoformat()
+    with _db_connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE team_profiles
+               SET name = ?,
+                   email = ?,
+                   role = ?,
+                   linkedin_url = ?,
+                   professional_summary = ?,
+                   expertise_json = ?,
+                   availability_notes = ?,
+                   current_load = ?,
+                   available_hours_per_week = ?,
+                   sprint_hours_remaining = ?,
+                   work_days_json = ?,
+                   updated_at = ?
+             WHERE id = ?
+            """,
+            (
+                payload.name,
+                payload.email,
+                payload.role,
+                payload.linkedin_url,
+                payload.professional_summary,
+                json.dumps(payload.expertise),
+                payload.availability_notes,
+                payload.current_load,
+                payload.schedule.available_hours_per_week,
+                payload.schedule.sprint_hours_remaining,
+                json.dumps(payload.schedule.work_days),
+                now,
+                profile_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Team profile not found")
+        conn.commit()
+        row = conn.execute("SELECT * FROM team_profiles WHERE id = ?", (profile_id,)).fetchone()
+    return _team_profile_row_to_dict(row)
+
+
+@app.delete("/api/team-profiles/{profile_id}")
+async def delete_team_profile(profile_id: str):
+    with _db_connect() as conn:
+        cur = conn.execute("DELETE FROM team_profiles WHERE id = ?", (profile_id,))
+        conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Team profile not found")
+    return {"deleted": True, "id": profile_id}
+
+
+@app.get("/api/scans")
+async def list_scans():
+    with _db_connect() as conn:
+        rows = conn.execute(
+            "SELECT id, label, system_name, counts_json, created_at FROM scan_history ORDER BY created_at DESC"
+        ).fetchall()
+    return {"items": [_scan_row_to_meta(r) for r in rows]}
+
+
+@app.get("/api/scans/{scan_id}")
+async def get_scan(scan_id: str):
+    with _db_connect() as conn:
+        row = conn.execute("SELECT * FROM scan_history WHERE id = ?", (scan_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "system_name": row["system_name"],
+        "counts": _json_loads_safe(row["counts_json"], {}),
+        "request_payload": _json_loads_safe(row["request_json"], {}),
+        "result_payload": _json_loads_safe(row["result_json"], {}),
+        "created_at": row["created_at"],
+    }
+
+
+@app.post("/api/scans")
+async def create_scan(payload: ScanRecordRequest):
+    scan_id = str(uuid.uuid4())
+    created_at = datetime.utcnow().isoformat()
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO scan_history (id, label, system_name, counts_json, request_json, result_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scan_id,
+                payload.label,
+                payload.system_name,
+                json.dumps(payload.counts),
+                json.dumps(payload.request_payload),
+                json.dumps(payload.result_payload),
+                created_at,
+            ),
+        )
+        conn.commit()
+    return {
+        "id": scan_id,
+        "label": payload.label,
+        "system_name": payload.system_name,
+        "counts": payload.counts,
+        "created_at": created_at,
+    }
+
+
+@app.delete("/api/scans/{scan_id}")
+async def delete_scan(scan_id: str):
+    with _db_connect() as conn:
+        cur = conn.execute("DELETE FROM scan_history WHERE id = ?", (scan_id,))
+        conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Scan not found")
+    return {"deleted": True, "id": scan_id}
+
+
+@app.delete("/api/scans")
+async def clear_scans():
+    with _db_connect() as conn:
+        conn.execute("DELETE FROM scan_history")
+        conn.commit()
+    return {"deleted": True}
 
 
 @app.post("/api/analyze")

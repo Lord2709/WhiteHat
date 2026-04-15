@@ -43,7 +43,7 @@
   .status-dot.orange{background:var(--warning);box-shadow:0 0 8px var(--warning)}
   @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.4}}
   .page-nav{display:flex;gap:4px}
-  .nav-step{display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:6px;font-size:13px;font-weight:500;cursor:default;color:var(--text3);transition:all .2s}
+  .nav-step{display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;color:var(--text3);transition:all .2s}
   .nav-step.active{background:var(--primary-dim);color:var(--primary)}
   .nav-step.done{color:var(--success)}
   .nav-num{width:20px;height:20px;border-radius:50%;border:1.5px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:10px;font-family:var(--mono);flex-shrink:0}
@@ -303,6 +303,33 @@
 const { useState, useEffect, useRef, useCallback } = React;
 const API_URL = 'http://localhost:8000';
 
+const STORAGE_KEYS = {
+  page: 'whitehat-ui-page-v1',
+  config: 'whitehat-ui-config-v1',
+  results: 'whitehat-ui-latest-results-v1',
+  history: 'whitehat-ui-scan-history-v1',
+  exploitLang: 'whitehat-ui-exploit-lang-v1',
+  pocState: 'whitehat-ui-poc-state-v1',
+  lastRequest: 'whitehat-ui-last-request-v1',
+};
+
+function readStoredJSON(key, fallback) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredJSON(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    return;
+  }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const cvssClass  = (s,p) => p||s===0?'cvss-pending':s>=9?'cvss-critical':s>=7?'cvss-high':s>=4?'cvss-medium':'cvss-low';
 const cvssLabel  = (s,p,src) => {
@@ -323,6 +350,32 @@ const initials   = n => (n||'?').split(' ').map(w=>w[0]).join('').toUpperCase().
 const avatarClr  = n => {const h=[...n].reduce((a,c)=>a+c.charCodeAt(0),0);return ['#7c3aed','#3b82f6','#10b981','#f59e0b','#ef4444','#ec4899'][h%6];};
 const sourceBadge = s => s==='va-report'?'source-va':s==='nvd-sca'||s==='nvd'||s==='nvd-verified'?'source-nvd':s==='osv'?'source-osv':s==='llm-fallback'?'source-llm-fallback':'source-demo';
 const sourceLabel = s => s==='va-report'?'VA':s==='nvd-sca'||s==='nvd'?'NVD':s==='nvd-verified'?'NVD ✓':s==='osv'?'OSV ✓':s==='llm-fallback'?'LLM?':'DEMO';
+
+const teamProfileToMember = p => ({
+  name: p?.name || 'Engineer',
+  email: p?.email || '',
+  role: p?.role || '',
+  linkedin_url: p?.linkedin_url || '',
+  professional_summary: p?.professional_summary || '',
+  expertise: Array.isArray(p?.expertise) ? p.expertise : [],
+  availability_notes: p?.availability_notes || '',
+  current_load: Number.isFinite(p?.current_load) ? p.current_load : 0,
+  schedule: {
+    available_hours_per_week: p?.schedule?.available_hours_per_week ?? 40,
+    sprint_hours_remaining: p?.schedule?.sprint_hours_remaining ?? 20,
+    work_days: Array.isArray(p?.schedule?.work_days)
+      ? p.schedule.work_days
+      : ['monday','tuesday','wednesday','thursday','friday'],
+  },
+});
+
+const normalizeScanMeta = item => ({
+  id: item?.id,
+  label: item?.label || 'Scan result',
+  timestamp: item?.created_at || '',
+  systemName: item?.system_name || 'system',
+  counts: item?.counts || {},
+});
 
 // ─── Pipeline Steps (9) ─────────────────────────────────────────────────────
 const STEPS = [
@@ -374,24 +427,26 @@ function CodeBlock({code, language}) {
 }
 
 // ─── Configure Page ──────────────────────────────────────────────────────────
-function ConfigurePage({onRun, exploitLang, setExploitLang}) {
-  const [packages,   setPackages]   = useState({});
-  const [fileName,   setFileName]   = useState('');
-  const [vaCves,     setVaCves]     = useState([]);
-  const [vaLlmNote,  setVaLlmNote]  = useState('');
-  const [vaFile,     setVaFile]     = useState('');
+function ConfigurePage({onRun, exploitLang, setExploitLang, onGoTeamPage}) {
+  const savedConfig = readStoredJSON(STORAGE_KEYS.config, {});
+  const [packages,   setPackages]   = useState(() => savedConfig.packages || {});
+  const [fileName,   setFileName]   = useState(() => savedConfig.fileName || '');
+  const [vaCves,     setVaCves]     = useState(() => savedConfig.vaCves || []);
+  const [vaLlmNote,  setVaLlmNote]  = useState(() => savedConfig.vaLlmNote || '');
+  const [vaFile,     setVaFile]     = useState(() => savedConfig.vaFile || '');
   const [vaUploading,setVaUploading]= useState(false);
   const [vaDragging, setVaDragging] = useState(false);
   const [dragging,   setDragging]   = useState(false);
-  const [sysInfo, setSysInfo] = useState({name:'payment-gateway',tier:'critical',regulatory:['PCI'],owner:'security-team',dependencies:[]});
-  const [windows, setWindows] = useState([{day:'Sunday',time:'02:00',duration_hours:4}]);
-  const [team, setTeam] = useState([
+  const [sysInfo, setSysInfo] = useState(() => savedConfig.sysInfo || {name:'payment-gateway',tier:'critical',regulatory:['PCI'],owner:'security-team',dependencies:[]});
+  const [windows, setWindows] = useState(() => savedConfig.windows || [{day:'Sunday',time:'02:00',duration_hours:4}]);
+  const [team, setTeam] = useState(() => savedConfig.team || [
     {name:'Alex Chen',   email:'alex@co.com',  expertise:['nodejs','security'], current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:20,work_days:['monday','tuesday','wednesday','thursday','friday']}},
     {name:'Priya Sharma',email:'priya@co.com', expertise:['python','devops'],   current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:15,work_days:['monday','tuesday','wednesday','thursday','friday']}},
     {name:'Marcus Webb', email:'marcus@co.com',expertise:['nodejs','react'],    current_load:0, schedule:{available_hours_per_week:40,sprint_hours_remaining:24,work_days:['monday','tuesday','wednesday','thursday','friday']}},
   ]);
-  const [newMember, setNewMember] = useState({name:'',email:'',expertiseStr:'',sprintHours:20});
-  const [apiKeys,  setApiKeys]   = useState({anthropic:'',gemini:''});
+  const [newMember, setNewMember] = useState(() => savedConfig.newMember || {name:'',email:'',expertiseStr:'',sprintHours:20});
+  const [apiKeys,  setApiKeys]   = useState(() => savedConfig.apiKeys || {anthropic:'',gemini:''});
+  const [teamSyncNote, setTeamSyncNote] = useState('');
   const [envKeys,  setEnvKeys]   = useState({gemini:false,anthropic:false,nvd:false});
   const [showApiModal, setShowApiModal] = useState(false);
   useEffect(()=>{
@@ -499,6 +554,38 @@ function ConfigurePage({onRun, exploitLang, setExploitLang}) {
   };
   const removeMember = i => setTeam(t=>t.filter((_,j)=>j!==i));
   const updateSprintHours = (i,h) => setTeam(t=>t.map((m,j)=>j===i?{...m,schedule:{...m.schedule,sprint_hours_remaining:parseInt(h)||0}}:m));
+
+  const importTeamProfiles = async () => {
+    try {
+      const resp = await fetch(`${API_URL}/api/team-profiles`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      const imported = (Array.isArray(data.items) ? data.items : []).map(teamProfileToMember);
+      if (!imported.length) {
+        setTeamSyncNote('No saved team profiles found in database.');
+        return;
+      }
+      setTeam(imported);
+      setTeamSyncNote(`Imported ${imported.length} team profiles from database.`);
+    } catch (err) {
+      setTeamSyncNote(`Unable to import team profiles: ${err.message}`);
+    }
+  };
+
+  useEffect(() => {
+    writeStoredJSON(STORAGE_KEYS.config, {
+      packages,
+      fileName,
+      vaCves,
+      vaLlmNote,
+      vaFile,
+      sysInfo,
+      windows,
+      team,
+      newMember,
+      apiKeys,
+    });
+  }, [packages, fileName, vaCves, vaLlmNote, vaFile, sysInfo, windows, team, newMember, apiKeys]);
 
   const hasApiKey = !!(apiKeys.anthropic || apiKeys.gemini || envKeys.gemini || envKeys.anthropic);
   const canRun = Object.keys(packages).length > 0 || vaCves.length > 0;
@@ -625,11 +712,19 @@ function ConfigurePage({onRun, exploitLang, setExploitLang}) {
             <div className="card-header"><span>👥</span><span className="card-title">Dev Team & Sprint Schedule</span></div>
             <div className="card-body">
               <div className="section-label">Members, Skills & Sprint Capacity</div>
+              <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                <button className="btn btn-outline btn-sm" onClick={importTeamProfiles}>Import Saved Team Profiles</button>
+                <button className="btn btn-outline btn-sm" onClick={onGoTeamPage}>Manage Team Profiles</button>
+              </div>
+              {teamSyncNote && (
+                <div style={{marginBottom:10,fontSize:11,color:'var(--text2)'}}>{teamSyncNote}</div>
+              )}
               <div style={{display:'flex',flexDirection:'column',gap:7,marginBottom:12}}>
                 {team.map((m,i)=>(
                   <div key={i} className="team-member-item">
                     <div style={{flex:1,minWidth:0}}>
                       <div className="member-name">{m.name} <span style={{fontSize:10,color:'var(--text3)'}}>— {m.email}</span></div>
+                      {!!m.role && <div style={{fontSize:10,color:'var(--text3)',marginTop:2}}>Role: {m.role}</div>}
                       <div className="member-skills">{m.expertise.map(e=><span key={e} className="skill-tag">{e}</span>)}</div>
                     </div>
                     <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:8,flexShrink:0}}>
@@ -1275,22 +1370,285 @@ function ResultsPage({results, pocState, setPocState, handleGeneratePoC, exploit
   );
 }
 
+// ─── History Page ────────────────────────────────────────────────────────────
+function HistoryPage({history, onOpenScan, onClearHistory}) {
+  const scans = Array.isArray(history) ? history : [];
+
+  return (
+    <div className="page">
+      <div style={{marginBottom:22,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+        <div>
+          <div className="page-title">Saved Scans</div>
+          <div className="page-sub">Previously completed analyses stored in the backend database</div>
+        </div>
+        <button className="btn btn-outline btn-sm" onClick={onClearHistory} disabled={!scans.length}>Clear History</button>
+      </div>
+
+      <div className="card">
+        <div className="card-body">
+          {scans.length === 0 ? (
+            <div style={{textAlign:'center',padding:'50px 20px',color:'var(--text3)'}}>
+              No saved scans yet. Run an analysis and the full result set will be stored here.
+            </div>
+          ) : (
+            <div style={{display:'grid',gap:14}}>
+              {scans.map(scan => (
+                <div key={scan.id} style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:12,padding:16,display:'flex',justifyContent:'space-between',gap:14,flexWrap:'wrap'}}>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:700,color:'var(--text0)'}}>{scan.label}</div>
+                    <div style={{fontSize:11,color:'var(--text2)',marginTop:4,fontFamily:'var(--mono)'}}>{scan.timestamp ? new Date(scan.timestamp).toLocaleString() : ''}</div>
+                    <div style={{fontSize:12,color:'var(--text2)',marginTop:8}}>
+                      {scan.counts?.vulnerabilities || 0} CVEs · {scan.counts?.tickets || 0} tickets · {scan.counts?.calendar || 0} scheduled patches
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+                    <button className="btn btn-outline btn-sm" onClick={()=>onOpenScan(scan)}>Open</button>
+                    <span className="source-badge source-demo">{scan.systemName || 'scan'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Team Profiles Page ─────────────────────────────────────────────────────
+function TeamProfilesPage() {
+  const EMPTY_FORM = {
+    id: null,
+    name: '',
+    email: '',
+    role: '',
+    linkedin_url: '',
+    professional_summary: '',
+    expertise_str: '',
+    availability_notes: '',
+    current_load: 0,
+    available_hours_per_week: 40,
+    sprint_hours_remaining: 20,
+    work_days: ['monday','tuesday','wednesday','thursday','friday'],
+  };
+  const [profiles, setProfiles] = useState([]);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [statusMsg, setStatusMsg] = useState('');
+
+  const loadProfiles = async () => {
+    try {
+      const resp = await fetch(`${API_URL}/api/team-profiles`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setProfiles(Array.isArray(data.items) ? data.items : []);
+    } catch (err) {
+      setStatusMsg(`Unable to load team profiles: ${err.message}`);
+    }
+  };
+
+  useEffect(() => {
+    loadProfiles();
+  }, []);
+
+  const saveProfile = async () => {
+    if (!form.name.trim() || !form.email.trim()) {
+      setStatusMsg('Name and email are required.');
+      return;
+    }
+    const payload = {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      role: form.role.trim(),
+      linkedin_url: form.linkedin_url.trim(),
+      professional_summary: form.professional_summary.trim(),
+      expertise: form.expertise_str.split(',').map(s => s.trim()).filter(Boolean),
+      availability_notes: form.availability_notes.trim(),
+      current_load: parseInt(form.current_load || 0, 10) || 0,
+      schedule: {
+        available_hours_per_week: parseInt(form.available_hours_per_week || 40, 10) || 40,
+        sprint_hours_remaining: parseInt(form.sprint_hours_remaining || 20, 10) || 20,
+        work_days: form.work_days,
+      },
+    };
+    const isUpdate = !!form.id;
+    const url = isUpdate
+      ? `${API_URL}/api/team-profiles/${form.id}`
+      : `${API_URL}/api/team-profiles`;
+    const method = isUpdate ? 'PUT' : 'POST';
+    try {
+      const resp = await fetch(url, {
+        method,
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      await loadProfiles();
+      setForm(EMPTY_FORM);
+      setStatusMsg(isUpdate ? 'Team profile updated.' : 'Team profile added.');
+    } catch (err) {
+      setStatusMsg(`Failed to save profile: ${err.message}`);
+    }
+  };
+
+  const editProfile = p => {
+    setForm({
+      id: p.id,
+      name: p.name || '',
+      email: p.email || '',
+      role: p.role || '',
+      linkedin_url: p.linkedin_url || '',
+      professional_summary: p.professional_summary || '',
+      expertise_str: Array.isArray(p.expertise) ? p.expertise.join(', ') : '',
+      availability_notes: p.availability_notes || '',
+      current_load: p.current_load ?? 0,
+      available_hours_per_week: p.schedule?.available_hours_per_week ?? 40,
+      sprint_hours_remaining: p.schedule?.sprint_hours_remaining ?? 20,
+      work_days: Array.isArray(p.schedule?.work_days) ? p.schedule.work_days : ['monday','tuesday','wednesday','thursday','friday'],
+    });
+  };
+
+  const deleteProfile = async id => {
+    try {
+      const resp = await fetch(`${API_URL}/api/team-profiles/${id}`, {method:'DELETE'});
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      await loadProfiles();
+      setStatusMsg('Team profile deleted.');
+    } catch (err) {
+      setStatusMsg(`Failed to delete profile: ${err.message}`);
+    }
+  };
+
+  const toggleWorkDay = day => {
+    setForm(prev => ({
+      ...prev,
+      work_days: prev.work_days.includes(day)
+        ? prev.work_days.filter(d => d !== day)
+        : [...prev.work_days, day],
+    }));
+  };
+
+  return (
+    <div className="page">
+      <div style={{marginBottom:22}}>
+        <div className="page-title">Team Profiles</div>
+        <div className="page-sub">Persisted team roles, LinkedIn, professional summaries, skills, and availability for smarter assignment</div>
+      </div>
+      <div className="config-grid">
+        <div className="card">
+          <div className="card-header"><span>🧾</span><span className="card-title">Profile Editor</span></div>
+          <div className="card-body" style={{display:'grid',gap:10}}>
+            <div className="field"><label>Name</label><input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Jane Doe"/></div>
+            <div className="field"><label>Email</label><input value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="jane@company.com"/></div>
+            <div className="field"><label>Role</label><input value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))} placeholder="Senior Backend Engineer"/></div>
+            <div className="field"><label>LinkedIn URL (optional)</label><input value={form.linkedin_url} onChange={e=>setForm(f=>({...f,linkedin_url:e.target.value}))} placeholder="https://linkedin.com/in/..."/></div>
+            <div className="field"><label>Skills (comma-separated)</label><input value={form.expertise_str} onChange={e=>setForm(f=>({...f,expertise_str:e.target.value}))} placeholder="python, nodejs, security"/></div>
+            <div className="field"><label>Professional Summary</label><textarea rows="3" value={form.professional_summary} onChange={e=>setForm(f=>({...f,professional_summary:e.target.value}))} placeholder="Key experience, systems owned, strengths"/></div>
+            <div className="field"><label>Availability Notes</label><textarea rows="2" value={form.availability_notes} onChange={e=>setForm(f=>({...f,availability_notes:e.target.value}))} placeholder="Time zone, on-call, planned leave"/></div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+              <div className="field"><label>Current Load</label><input type="number" value={form.current_load} onChange={e=>setForm(f=>({...f,current_load:e.target.value}))}/></div>
+              <div className="field"><label>Hours / Week</label><input type="number" value={form.available_hours_per_week} onChange={e=>setForm(f=>({...f,available_hours_per_week:e.target.value}))}/></div>
+              <div className="field"><label>Sprint Hours Free</label><input type="number" value={form.sprint_hours_remaining} onChange={e=>setForm(f=>({...f,sprint_hours_remaining:e.target.value}))}/></div>
+            </div>
+            <div className="field">
+              <label>Work Days</label>
+              <div className="checkbox-group">
+                {['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].map(day => (
+                  <label key={day} className={`checkbox-item${form.work_days.includes(day)?' checked':''}`}>
+                    <input type="checkbox" checked={form.work_days.includes(day)} onChange={()=>toggleWorkDay(day)} />
+                    {day.slice(0,3).toUpperCase()}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              <button className="btn btn-primary" onClick={saveProfile}>{form.id ? 'Update Profile' : 'Save Profile'}</button>
+              <button className="btn btn-outline" onClick={()=>setForm(EMPTY_FORM)}>Reset</button>
+            </div>
+            {statusMsg && <div style={{fontSize:11,color:'var(--text2)'}}>{statusMsg}</div>}
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-header"><span>👥</span><span className="card-title">Saved Profiles</span></div>
+          <div className="card-body" style={{display:'grid',gap:10}}>
+            {!profiles.length && <div style={{fontSize:12,color:'var(--text3)'}}>No profiles saved yet.</div>}
+            {profiles.map(p => (
+              <div key={p.id} style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:10,padding:12}}>
+                <div style={{fontSize:13,fontWeight:700,color:'var(--text0)'}}>{p.name}</div>
+                <div style={{fontSize:11,color:'var(--text2)',marginTop:3}}>{p.role || 'Role not set'} · {p.email}</div>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8}}>
+                  {(Array.isArray(p.expertise) ? p.expertise : []).map(skill => <span key={skill} className="skill-tag">{skill}</span>)}
+                </div>
+                <div style={{display:'flex',gap:8,marginTop:10}}>
+                  <button className="btn btn-outline btn-sm" onClick={()=>editProfile(p)}>Edit</button>
+                  <button className="btn btn-outline btn-sm" onClick={()=>deleteProfile(p.id)}>Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Root App ─────────────────────────────────────────────────────────────────
 function App() {
-  const [page,       setPage]       = useState('configure');
+  const [page,       setPage]       = useState(() => readStoredJSON(STORAGE_KEYS.page, 'configure'));
   const [stepStates, setStepStates] = useState({});
   const [logs,       setLogs]       = useState([]);
   const [progress,   setProgress]   = useState(0);
-  const [results,    setResults]    = useState(null);
+  const [results,    setResults]    = useState(() => readStoredJSON(STORAGE_KEYS.results, null));
   const [error,      setError]      = useState('');
   const [backendOk,  setBackendOk]  = useState(null);
-  const [exploitLang, setExploitLang] = useState('python');
-  const [pocState, setPocState] = useState({});
-  const [lastRequest, setLastRequest] = useState(null);
+  const [exploitLang, setExploitLang] = useState(() => readStoredJSON(STORAGE_KEYS.exploitLang, 'python'));
+  const [pocState, setPocState] = useState(() => readStoredJSON(STORAGE_KEYS.pocState, {}));
+  const [lastRequest, setLastRequest] = useState(() => readStoredJSON(STORAGE_KEYS.lastRequest, null));
+  const [scanHistory, setScanHistory] = useState(() => readStoredJSON(STORAGE_KEYS.history, []));
 
   useEffect(()=>{
     fetch(`${API_URL}/health`).then(r=>r.json()).then(()=>setBackendOk(true)).catch(()=>setBackendOk(false));
   },[]);
+
+  const refreshScanHistory = useCallback(async () => {
+    try {
+      const resp = await fetch(`${API_URL}/api/scans`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      const items = (Array.isArray(data.items) ? data.items : []).map(normalizeScanMeta);
+      setScanHistory(items);
+      writeStoredJSON(STORAGE_KEYS.history, items);
+    } catch {
+      // Keep local fallback when backend DB is unavailable.
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshScanHistory();
+  }, [refreshScanHistory]);
+
+  useEffect(() => {
+    writeStoredJSON(STORAGE_KEYS.page, page);
+  }, [page]);
+
+  useEffect(() => {
+    writeStoredJSON(STORAGE_KEYS.results, results);
+  }, [results]);
+
+  useEffect(() => {
+    writeStoredJSON(STORAGE_KEYS.exploitLang, exploitLang);
+  }, [exploitLang]);
+
+  useEffect(() => {
+    writeStoredJSON(STORAGE_KEYS.pocState, pocState);
+  }, [pocState]);
+
+  useEffect(() => {
+    writeStoredJSON(STORAGE_KEYS.lastRequest, lastRequest);
+  }, [lastRequest]);
+
+  useEffect(() => {
+    writeStoredJSON(STORAGE_KEYS.history, scanHistory);
+  }, [scanHistory]);
 
   const addLog = (text, type='') => setLogs(l=>[...l,{time:now(),text,type}]);
 
@@ -1373,6 +1731,27 @@ function App() {
               setProgress(100);
               addLog('━━ Pipeline complete! Loading results…','success');
               setResults(data.data);
+              try {
+                const counts = {
+                  vulnerabilities: Array.isArray(data.data?.vulnerabilities) ? data.data.vulnerabilities.length : 0,
+                  tickets: Array.isArray(data.data?.tickets) ? data.data.tickets.length : 0,
+                  calendar: Array.isArray(data.data?.calendar) ? data.data.calendar.length : 0,
+                };
+                await fetch(`${API_URL}/api/scans`, {
+                  method: 'POST',
+                  headers: {'Content-Type':'application/json'},
+                  body: JSON.stringify({
+                    label: request.system_info?.name ? `${request.system_info.name} scan` : 'Scan result',
+                    system_name: request.system_info?.name || 'system',
+                    counts,
+                    request_payload: request,
+                    result_payload: data.data,
+                  }),
+                });
+                refreshScanHistory();
+              } catch {
+                // Non-blocking: analysis results are still shown even if history persistence fails.
+              }
               setTimeout(()=>setPage('results'),500);
               return;
             }
@@ -1407,7 +1786,53 @@ function App() {
     }
   };
 
-  const navSt = pg => pg==='configure'?page==='configure'?'active':'done':pg==='pipeline'?page==='pipeline'?'active':page==='results'?'done':'':page==='results'?'active':'';
+  const navSt = pg => {
+    if (pg === 'configure') return page === 'configure' ? 'active' : 'done';
+    if (pg === 'team') return page === 'team' ? 'active' : (page === 'pipeline' || page === 'results' || page === 'history' ? 'done' : '');
+    if (pg === 'pipeline') return page === 'pipeline' ? 'active' : (page === 'results' || page === 'history' ? 'done' : '');
+    if (pg === 'results') return page === 'results' ? 'active' : (page === 'history' ? 'done' : '');
+    if (pg === 'history') return page === 'history' ? 'active' : '';
+    return '';
+  };
+  const navItems = [
+    ['configure', '1', 'Configure'],
+    ['team', '2', 'Team'],
+    ['pipeline', '3', 'Pipeline'],
+    ['results', '4', 'Results'],
+    ['history', '5', 'History'],
+  ];
+
+  const canNavigateTo = pg => {
+    if (pg === 'pipeline') return false;
+    if (pg === 'results') return !!results;
+    if (pg === 'history') return true;
+    if (pg === 'team') return true;
+    return true;
+  };
+
+  const openSavedScan = async scan => {
+    if (!scan?.id) return;
+    try {
+      const resp = await fetch(`${API_URL}/api/scans/${scan.id}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setResults(data.result_payload || null);
+      if (data.request_payload) setLastRequest(data.request_payload);
+      setPage('results');
+    } catch (err) {
+      addLog(`Unable to open saved scan: ${err.message}`, 'error');
+    }
+  };
+
+  const clearHistory = async () => {
+    try {
+      await fetch(`${API_URL}/api/scans`, {method:'DELETE'});
+    } catch {
+      // keep local cleanup fallback
+    }
+    setScanHistory([]);
+    writeStoredJSON(STORAGE_KEYS.history, []);
+  };
 
   return (
     <div className="app-shell">
@@ -1425,8 +1850,15 @@ function App() {
             <span className="logo-badge">v2 · POCme</span>
           </div>
           <div className="page-nav">
-            {[['configure','1','Configure'],['pipeline','2','Pipeline'],['results','3','Results']].map(([pg,n,l])=>(
-              <div key={pg} className={`nav-step ${navSt(pg)}`}><div className="nav-num">{navSt(pg)==='done'?'✓':n}</div>{l}</div>
+            {navItems.map(([pg,n,l])=>(
+              <div
+                key={pg}
+                className={`nav-step ${navSt(pg)}`}
+                onClick={() => { if (canNavigateTo(pg)) setPage(pg); }}
+                style={{opacity: canNavigateTo(pg) ? 1 : 0.55}}
+              >
+                <div className="nav-num">{navSt(pg)==='done'?'✓':n}</div>{l}
+              </div>
             ))}
           </div>
           <div className="topbar-right">
@@ -1445,9 +1877,11 @@ function App() {
           </div>
         )}
 
-        {page==='configure'&&<ConfigurePage onRun={handleRun} exploitLang={exploitLang} setExploitLang={setExploitLang}/>}
+        {page==='configure'&&<ConfigurePage onRun={handleRun} exploitLang={exploitLang} setExploitLang={setExploitLang} onGoTeamPage={()=>setPage('team')}/>}
+        {page==='team'     &&<TeamProfilesPage/>}
         {page==='pipeline' &&<PipelinePage stepStates={stepStates} logs={logs} progress={progress}/>}
         {page==='results'  &&results&&<ResultsPage results={results} pocState={pocState} setPocState={setPocState} handleGeneratePoC={handleGeneratePoC} exploitLang={exploitLang}/>}
+        {page==='history'  &&<HistoryPage history={scanHistory} onOpenScan={openSavedScan} onClearHistory={clearHistory}/>}
 
         {error&&page==='pipeline'&&(
           <div style={{padding:'24px 28px'}}>
