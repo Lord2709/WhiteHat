@@ -1986,11 +1986,12 @@ async def analyze(request: AnalyzeRequest):
         gk = request.gemini_api_key or ENV_GEMINI_KEY
         ak = request.anthropic_api_key or ENV_ANTHROPIC_KEY
 
-        # ── Guard: at least one LLM key required
         if not gk and not ak:
-            yield evt("error", "error",
-                      "API key required — please add a Gemini key, Anthropic key, or both in Configure → API Keys.")
-            return
+            yield evt(
+                "pipeline_mode",
+                "done",
+                "No Gemini or Anthropic key provided — running in verified-data mode with NVD/OSV lookups and deterministic fallbacks.",
+            )
 
         try:
             today = datetime.now()

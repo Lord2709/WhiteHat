@@ -374,7 +374,7 @@ function CodeBlock({code, language}) {
 }
 
 // ─── Configure Page ──────────────────────────────────────────────────────────
-function ConfigurePage({onRun}) {
+function ConfigurePage({onRun, exploitLang, setExploitLang}) {
   const [packages,   setPackages]   = useState({});
   const [fileName,   setFileName]   = useState('');
   const [vaCves,     setVaCves]     = useState([]);
@@ -399,8 +399,6 @@ function ConfigurePage({onRun}) {
       setEnvKeys({gemini:!!d.gemini_key_loaded, anthropic:!!d.anthropic_key_loaded, nvd:!!d.nvd_key_loaded});
     }).catch(()=>{});
   },[]);
-  const [exploitLang, setExploitLang]  = useState('python');
-  const [pocState, setPocState]        = useState({});   // { [cve_id]: {loading, code, language, error, model} }
   const fileRef = useRef(null);
   const vaRef   = useRef(null);
   const sampleRef = useRef(null);
@@ -503,44 +501,7 @@ function ConfigurePage({onRun}) {
   const updateSprintHours = (i,h) => setTeam(t=>t.map((m,j)=>j===i?{...m,schedule:{...m.schedule,sprint_hours_remaining:parseInt(h)||0}}:m));
 
   const hasApiKey = !!(apiKeys.anthropic || apiKeys.gemini || envKeys.gemini || envKeys.anthropic);
-  const canRun = (Object.keys(packages).length > 0 || vaCves.length > 0) && hasApiKey;
-
-  const handleGeneratePoC = async (vuln, lang) => {
-    const cveId = vuln.cve_id;
-    setPocState(prev => ({...prev, [cveId]: {loading: true, code: '', error: null}}));
-    try {
-      const body = {
-        cve_id:           cveId,
-        description:      vuln.description || '',
-        full_research:    vuln.full_research || vuln.description || '',
-        package:          vuln.package || '',
-        version:          vuln.version || '',
-        language:         lang || exploitLang,
-        cvss:             vuln.cvss || 5.0,
-        references:       vuln.references || [],
-        research_grounded: !!vuln.research_grounded,
-        gemini_api_key:   apiKeys.gemini || null,
-        anthropic_api_key: apiKeys.anthropic || null,
-      };
-      const res = await fetch(`${API_URL}/api/generate-exploit`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Generation failed');
-      setPocState(prev => ({...prev, [cveId]: {
-        loading: false,
-        code:     data.code || '',
-        language: data.language || lang,
-        model:    data.model || 'unknown',
-        generated: data.generated,
-        error:    null,
-      }}));
-    } catch (err) {
-      setPocState(prev => ({...prev, [cveId]: {loading: false, code: '', error: err.message}}));
-    }
-  };
+  const canRun = Object.keys(packages).length > 0 || vaCves.length > 0;
 
   const handleRun = () => {
     onRun({packages, va_cve_ids:vaCves, system_info:sysInfo, maintenance_windows:windows,
@@ -556,8 +517,8 @@ function ConfigurePage({onRun}) {
           <div className="page-sub">Upload SBOM + VA report, define your system, set team schedule</div>
         </div>
         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8}}>
-          {!hasApiKey&&<div style={{background:'rgba(239,68,68,.12)',border:'1px solid rgba(239,68,68,.35)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#fca5a5',display:'flex',alignItems:'center',gap:6}}>
-            ⚠ Add a Gemini or Anthropic API key to enable the LLM pipeline
+          {!hasApiKey&&<div style={{background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#fcd34d',display:'flex',alignItems:'center',gap:6}}>
+            ⚠ No Gemini or Anthropic key loaded — verified-data mode will still run NVD/OSV lookups and deterministic fallbacks
           </div>}
           {(envKeys.gemini||envKeys.anthropic)&&<div style={{background:'rgba(16,185,129,.1)',border:'1px solid rgba(16,185,129,.3)',borderRadius:8,padding:'6px 12px',fontSize:12,color:'#6ee7b7',display:'flex',alignItems:'center',gap:6}}>
             ✓ Server .env: {envKeys.gemini&&'Gemini'}{envKeys.gemini&&envKeys.anthropic&&' + '}{envKeys.anthropic&&'Anthropic'} key loaded{envKeys.nvd&&' + NVD'}
@@ -566,8 +527,8 @@ function ConfigurePage({onRun}) {
             ⚠ No NVD_API_KEY — CVSS fetch limited to 5 req/30s. Add key to .env to prevent NVD PENDING on multi-CVE scans.
           </div>}
           <div style={{display:'flex',gap:10}}>
-            <button className="btn btn-outline btn-sm" onClick={()=>setShowApiModal(true)}><Key/> {(envKeys.gemini||envKeys.anthropic)?'✓ .env Keys Active':'Add API Keys'}</button>
-            <button className="btn btn-primary" disabled={!canRun} onClick={handleRun} title={!hasApiKey?'Add a Gemini or Anthropic key first':undefined}><Play/> Run Agentic Analysis</button>
+            <button className="btn btn-outline btn-sm" onClick={()=>setShowApiModal(true)}><Key/> {(envKeys.gemini||envKeys.anthropic)?'✓ .env Keys Active':'API Keys Optional'}</button>
+            <button className="btn btn-primary" disabled={!canRun} onClick={handleRun} title={!hasApiKey?'Runs in verified-data mode without Gemini/Anthropic; add a key for LLM research and PoCs.':undefined}><Play/> Run Agentic Analysis</button>
           </div>
         </div>
       </div>
@@ -772,7 +733,7 @@ function ConfigurePage({onRun}) {
           <div className="modal-box">
             <div className="modal-title">🔑 API Keys</div>
             <div className="modal-sub">
-              <strong style={{color:'var(--danger)'}}>⚠ At least one key is required</strong> — the pipeline uses verified data sources plus bounded LLM analysis steps.<br/><br/>
+              <strong style={{color:'var(--warning)'}}>Verified-data mode works without keys</strong> — NVD/OSV lookups and deterministic scoring still run, but deep research, rationale, and PoC generation are richer with model keys.<br/><br/>
               <strong style={{color:'var(--success)'}}>Gemini</strong> → POCme CVE research, exploit generation, blast radius analysis, rationale.<br/>
               <strong style={{color:'var(--primary)'}}>Anthropic</strong> → Claude claude-opus-4-5 for evaluation &amp; rationale (preferred for structured output).<br/>
               Both keys = full dual-model pipeline with best-of-breed results.
@@ -845,7 +806,8 @@ function PipelinePage({stepStates, logs, progress}) {
 function VulnerabilitiesTab({vulns, execSummary, riskReduction}) {
   const [expanded, setExpanded] = useState(null);
   const [filterPoC, setFilterPoC] = useState(false);
-  const filtered = (vulns||[]).filter(v=>filterPoC?v.has_poc:true);
+  const safeVulns = Array.isArray(vulns) ? vulns.filter(Boolean) : [];
+  const filtered = safeVulns.filter(v=>filterPoC?v.has_poc:true);
 
   return (
     <div>
@@ -938,7 +900,8 @@ function VulnerabilitiesTab({vulns, execSummary, riskReduction}) {
 function ExploitsTab({vulns, pocState, setPocState, handleGeneratePoC, exploitLang}) {
   const [filter, setFilter] = useState('all');
 
-  const filtered = (vulns||[]).filter(v=>{
+  const safeVulns = Array.isArray(vulns) ? vulns.filter(Boolean) : [];
+  const filtered = safeVulns.filter(v=>{
     if (filter==='generated') return !!pocState?.[v.cve_id]?.code;
     if (filter==='high')      return v.evaluation?.viability==='High';
     if (filter==='poc')       return v.has_poc;
@@ -1052,9 +1015,9 @@ function ExploitsTab({vulns, pocState, setPocState, handleGeneratePoC, exploitLa
 
 // ─── Tickets Tab ─────────────────────────────────────────────────────────────
 function TicketsTab({tickets}) {
-  const [list, setList] = useState(tickets||[]);
+  const [list, setList] = useState(Array.isArray(tickets) ? tickets.filter(Boolean) : []);
   const [selected, setSelected] = useState(null);
-  useEffect(()=>setList(tickets||[]),[tickets]);
+  useEffect(()=>setList(Array.isArray(tickets) ? tickets.filter(Boolean) : []),[tickets]);
 
   const cols = [
     {status:'Open',       label:'Open',       dot:'var(--warning)'},
@@ -1155,6 +1118,7 @@ function TicketsTab({tickets}) {
 
 // ─── Calendar Tab ─────────────────────────────────────────────────────────────
 function CalendarTab({calendar}) {
+  const safeCalendar = Array.isArray(calendar) ? calendar.filter(Boolean) : [];
   return (
     <div>
       <div style={{marginBottom:18}}>
@@ -1165,7 +1129,7 @@ function CalendarTab({calendar}) {
         <table className="cal-table">
           <thead><tr><th>RANK</th><th>PATCH DATE</th><th>WINDOW</th><th>CVE / PACKAGE</th><th>PRIORITY</th><th>SCORE</th><th>EXPLOIT</th><th>VIABILITY</th><th>ASSIGNED</th><th>DUE DATE</th><th>HRS</th></tr></thead>
           <tbody>
-            {(calendar||[]).map(c=>(
+            {safeCalendar.map(c=>(
               <tr key={c.cve_id}>
                 <td><div className={`rank-badge${c.rank===1?' rank1':c.rank<=3?' top3':''}`}>#{c.rank}</div></td>
                 <td><span className="date-chip">📅 {c.scheduled_date}</span></td>
@@ -1190,8 +1154,9 @@ function CalendarTab({calendar}) {
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 function DashboardTab({stats, vulns, execSummary, riskReduction}) {
   const s = stats||{};
-  const top3 = (vulns||[]).slice(0,3);
-  const chartData = (vulns||[]).slice(0,8).map(v=>({l:v.package,v:v.priority_score,max:(vulns[0]||{}).priority_score||1}));
+  const safeVulns = Array.isArray(vulns) ? vulns.filter(Boolean) : [];
+  const top3 = safeVulns.slice(0,3);
+  const chartData = safeVulns.slice(0,8).map(v=>({l:v.package,v:v.priority_score,max:(safeVulns[0]||{}).priority_score||1}));
   const barClr = (v,m)=>{const p=v/m; return p>.7?'linear-gradient(90deg,#ff4757,#ff6b6b)':p>.4?'linear-gradient(90deg,#f59e0b,#fbbf24)':'linear-gradient(90deg,#3b82f6,#60a5fa)';};
 
   return (
@@ -1272,9 +1237,14 @@ function DashboardTab({stats, vulns, execSummary, riskReduction}) {
 }
 
 // ─── Results Page ─────────────────────────────────────────────────────────────
-function ResultsPage({results}) {
+function ResultsPage({results, pocState, setPocState, handleGeneratePoC, exploitLang}) {
   const [tab, setTab] = useState('vulns');
-  const {vulnerabilities=[],tickets=[],calendar=[],exec_summary='',risk_reduction=0,stats={}} = results||{};
+  const vulnerabilities = Array.isArray(results?.vulnerabilities) ? results.vulnerabilities.filter(Boolean) : [];
+  const tickets = Array.isArray(results?.tickets) ? results.tickets.filter(Boolean) : [];
+  const calendar = Array.isArray(results?.calendar) ? results.calendar.filter(Boolean) : [];
+  const exec_summary = results?.exec_summary || '';
+  const risk_reduction = results?.risk_reduction || 0;
+  const stats = results?.stats || {};
   const tabs = [
     {key:'vulns',    label:'Vulnerabilities', icon:'🔍',count:vulnerabilities.length},
     {key:'exploits', label:'Exploits & PoC',  icon:'💣',count:vulnerabilities.length},
@@ -1314,6 +1284,9 @@ function App() {
   const [results,    setResults]    = useState(null);
   const [error,      setError]      = useState('');
   const [backendOk,  setBackendOk]  = useState(null);
+  const [exploitLang, setExploitLang] = useState('python');
+  const [pocState, setPocState] = useState({});
+  const [lastRequest, setLastRequest] = useState(null);
 
   useEffect(()=>{
     fetch(`${API_URL}/health`).then(r=>r.json()).then(()=>setBackendOk(true)).catch(()=>setBackendOk(false));
@@ -1323,7 +1296,45 @@ function App() {
 
   const STEP_ORDER = STEPS.map(s=>s.key);
 
+  const handleGeneratePoC = async (vuln, lang) => {
+    const cveId = vuln.cve_id;
+    setPocState(prev => ({...prev, [cveId]: {loading: true, code: '', error: null}}));
+    try {
+      const body = {
+        cve_id:           cveId,
+        description:      vuln.description || '',
+        full_research:    vuln.full_research || vuln.description || '',
+        package:          vuln.package || '',
+        version:          vuln.version || '',
+        language:         lang || exploitLang,
+        cvss:             vuln.cvss || 5.0,
+        references:       vuln.references || [],
+        research_grounded: !!vuln.research_grounded,
+        gemini_api_key:   lastRequest?.gemini_api_key || null,
+        anthropic_api_key: lastRequest?.anthropic_api_key || null,
+      };
+      const res = await fetch(`${API_URL}/api/generate-exploit`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Generation failed');
+      setPocState(prev => ({...prev, [cveId]: {
+        loading: false,
+        code:     data.code || '',
+        language: data.language || lang,
+        model:    data.model || 'unknown',
+        generated: data.generated,
+        error:    null,
+      }}));
+    } catch (err) {
+      setPocState(prev => ({...prev, [cveId]: {loading: false, code: '', error: err.message}}));
+    }
+  };
+
   const handleRun = async request => {
+    setLastRequest(request);
     setPage('pipeline');
     setStepStates({});
     setLogs([]);
@@ -1434,9 +1445,9 @@ function App() {
           </div>
         )}
 
-        {page==='configure'&&<ConfigurePage onRun={handleRun}/>}
+        {page==='configure'&&<ConfigurePage onRun={handleRun} exploitLang={exploitLang} setExploitLang={setExploitLang}/>}
         {page==='pipeline' &&<PipelinePage stepStates={stepStates} logs={logs} progress={progress}/>}
-        {page==='results'  &&results&&<ResultsPage results={results}/>}
+        {page==='results'  &&results&&<ResultsPage results={results} pocState={pocState} setPocState={setPocState} handleGeneratePoC={handleGeneratePoC} exploitLang={exploitLang}/>}
 
         {error&&page==='pipeline'&&(
           <div style={{padding:'24px 28px'}}>
