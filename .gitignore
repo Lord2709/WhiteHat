@@ -1,0 +1,15 @@
+# Environment secrets
+/backend/.env
+/backend/.env.*
+
+# Python cache and bytecode
+/backend/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local editor and OS files
+.vscode/
+Thumbs.db
+.DS_Store
