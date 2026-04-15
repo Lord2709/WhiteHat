@@ -18,7 +18,6 @@ function ResultsPage({results, pocState, setPocState, handleGeneratePoC, exploit
     <div className="page">
       <div style={{marginBottom:22}}>
         <div className="page-title">Analysis Results</div>
-        <div className="page-sub">Agentic pipeline complete — every decision is explainable and auditable</div>
       </div>
       <div className="tab-bar">
         {tabs.map(t=>(

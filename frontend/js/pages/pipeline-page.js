@@ -6,7 +6,6 @@ function PipelinePage({stepStates, logs, progress}) {
     <div className="page">
       <div style={{marginBottom:20}}>
         <div className="page-title">🤖 Agentic Pipeline Running</div>
-        <div className="page-sub">9-step verified + AI-assisted pipeline — grounded CVE discovery · bounded research · LLM evaluation</div>
       </div>
       <div className="progress-bar-wrap"><div className="progress-bar-fill" style={{width:`${progress}%`}}/></div>
       <div className="pipeline-container">
@@ -153,7 +152,7 @@ function ExploitsTab({vulns, pocState, setPocState, handleGeneratePoC, exploitLa
         <div>
           <div style={{fontSize:16,fontWeight:700,color:'var(--text0)'}}>On-Demand PoC Exploits</div>
           <div style={{fontSize:12,color:'var(--text2)',marginTop:3}}>
-            Click <strong style={{color:'var(--danger)'}}>💣 Generate PoC</strong> per CVE — Gemini "Senior Vulnerability Researcher" prompt — for <strong style={{color:'var(--warning)'}}>authorized testing only</strong>
+            Click <strong style={{color:'var(--danger)'}}>💣 Generate PoC</strong> per CVE - for <strong style={{color:'var(--warning)'}}>authorized testing only</strong>
           </div>
         </div>
         <div style={{display:'flex',gap:6}}>
@@ -271,7 +270,7 @@ function TicketsTab({tickets}) {
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:18,flexWrap:'wrap',gap:10}}>
         <div>
           <div style={{fontSize:16,fontWeight:700,color:'var(--text0)'}}>Security Tickets</div>
-          <div style={{fontSize:12,color:'var(--text2)',marginTop:3}}>Schedule-based assignment — completion dates from sprint capacity</div>
+          <div style={{fontSize:12,color:'var(--text2)',marginTop:3}}>Schedule-based assignment</div>
         </div>
         <div style={{display:'flex',gap:10}}>
           {[{l:'Total',v:list.length,c:'var(--text0)'},{l:'Critical',v:list.filter(t=>t.priority_level==='Critical').length,c:'var(--danger)'},{l:'High Viability',v:list.filter(t=>t.viability==='High').length,c:'#f472b6'}].map(s=>(
@@ -366,7 +365,7 @@ function CalendarTab({calendar}) {
       </div>
       <div className="card" style={{overflow:'auto'}}>
         <table className="cal-table">
-          <thead><tr><th>RANK</th><th>PATCH DATE</th><th>WINDOW</th><th>CVE / PACKAGE</th><th>PRIORITY</th><th>SCORE</th><th>EXPLOIT</th><th>VIABILITY</th><th>ASSIGNED</th></tr></thead>
+          <thead><tr><th>RANK</th><th>PATCH DATE</th><th>WINDOW</th><th>CVE / PACKAGE</th><th>PRIORITY</th><th>SCORE</th><th>VIABILITY</th><th>ASSIGNED</th></tr></thead>
           <tbody>
             {safeCalendar.map(c=>(
               <tr key={c.cve_id}>
@@ -376,7 +375,6 @@ function CalendarTab({calendar}) {
                 <td><div className="cve-id">{c.cve_id}</div><div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{c.package}</div></td>
                 <td><span className={`priority-badge ${pClass(c.priority_level)}`}>{c.priority_level}</span></td>
                 <td><span className={`score-pill ${scoreClass(c.priority_score)}`}>{c.priority_score}</span></td>
-                <td>{c.exploit_language&&<span className={`lang-badge ${langClass(c.exploit_language)}`}>{c.exploit_language}</span>}</td>
                 <td>{c.viability&&<span className={`viability-badge ${vClass(c.viability)}`}>{c.viability}</span>}</td>
                 <td>{c.assigned_to&&<div style={{display:'flex',alignItems:'center',gap:6}}><div className="avatar" style={{background:avatarClr(c.assigned_to),width:18,height:18,fontSize:8}}>{initials(c.assigned_to)}</div><span style={{fontSize:11}}>{c.assigned_to}</span></div>}</td>
               </tr>

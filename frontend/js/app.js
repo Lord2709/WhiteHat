@@ -253,7 +253,6 @@ function App() {
               <circle cx="16" cy="11" r="2" fill="var(--primary)" opacity=".5"/>
             </svg>
             <span className="logo-text">Vuln<span>Priority</span> AI</span>
-            <span className="logo-badge">v2 · POCme</span>
           </div>
           <div className="page-nav">
             {navItems.map(([pg,n,l])=>(
@@ -298,11 +297,6 @@ function App() {
             </div>
           </div>
         )}
-
-        <div style={{borderTop:'1px solid var(--border2)',padding:'10px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:10,color:'var(--text3)',flexWrap:'wrap',gap:8}}>
-          <span>VulnPriority AI v3 — verified discovery · bounded research · LLM exploit gen · LLM evaluation · LLM blast radius · schedule-based assignment</span>
-          <span style={{fontFamily:'var(--mono)'}}>Priority = (CVSS × PoC × Blast) ÷ Complexity × Tier × RegFlag</span>
-        </div>
       </div>
     </div>
   );

@@ -1,5 +1,9 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const API_URL = 'http://localhost:8000';
+// In production (Render), frontend is served by the same FastAPI server,
+// so API calls are same-origin (empty string). Locally, backend runs on 8000.
+const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:8000'
+  : '';
 
 const STORAGE_KEYS = {
   page: 'whitehat-ui-page-v1',
